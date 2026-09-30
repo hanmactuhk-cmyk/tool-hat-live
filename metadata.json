@@ -1,0 +1,6 @@
+{
+  "name": "HNStudio Musik AI",
+  "description": "Phần mềm hát LIVE chuyên nghiệp trên Windows với Auto-Tune/VST3, Noise Gate, Compressor, Parametric EQ, De-Esser, Reverb, Realtime Waveform và Audio Routing bởi Hoài Nguyễn Studio",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
