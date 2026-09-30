@@ -1,0 +1,63 @@
+name: Build HNStudio Musik AI Windows x64
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Release
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        uses: ninja-build/setup-ninja@v1
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=cl `
+            -DCMAKE_CXX_COMPILER=cl
+
+      - name: Build HNStudio Musik AI (Release)
+        run: |
+          cmake --build build --config Release --target HNStudioMusikAI
+
+      - name: Prepare Release Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\HNStudio-Musik-AI
+          $exePath = Get-ChildItem -Path build -Filter "HNStudioMusikAI.exe" -Recurse | Select-Object -First 1
+          if ($exePath) {
+              Copy-Item -Path $exePath.FullName -Destination dist\HNStudio-Musik-AI\
+          } else {
+              Write-Error "HNStudioMusikAI.exe not found!"
+              exit 1
+          }
+          if (Test-Path "README.md") {
+              Copy-Item -Path "README.md" -Destination dist\HNStudio-Musik-AI\
+          }
+          New-Item -ItemType Directory -Force -Path dist\HNStudio-Musik-AI\Recordings
+          New-Item -ItemType Directory -Force -Path dist\HNStudio-Musik-AI\Projects
+          Compress-Archive -Path dist\HNStudio-Musik-AI\* -DestinationPath HNStudio-Musik-AI-Windows-x64.zip -Force
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HNStudio-Musik-AI-Windows-x64
+          path: HNStudio-Musik-AI-Windows-x64.zip
+          retention-days: 30
