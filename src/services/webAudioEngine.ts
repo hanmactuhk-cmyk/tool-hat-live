@@ -177,6 +177,7 @@ export class WebAudioEngine {
 
     this.setupDspChain();
     this.startNoiseGateProcessor();
+    this.loadSavedAudioConfig();
 
     return true;
   }
@@ -469,8 +470,64 @@ export class WebAudioEngine {
     }
   }
 
+  private activeOutputDeviceId: string = '';
+  private activeOutputDeviceName: string = 'Loa / Tai nghe Mặc Định';
+
+  public async setOutputDevice(deviceId: string): Promise<boolean> {
+    this.activeOutputDeviceId = deviceId;
+    try {
+      if (this.ctx && 'setSinkId' in this.ctx) {
+        await (this.ctx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
+      }
+      if (this.musicAudioElement && 'setSinkId' in this.musicAudioElement) {
+        await (this.musicAudioElement as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
+      }
+      this.saveAudioConfig();
+      return true;
+    } catch (e) {
+      console.warn('Set output device error:', e);
+      return false;
+    }
+  }
+
+  public getActiveInputDeviceId(): string {
+    return this.activeDeviceId;
+  }
+
+  public getActiveOutputDeviceId(): string {
+    return this.activeOutputDeviceId;
+  }
+
+  public saveAudioConfig() {
+    try {
+      const config = {
+        inputDeviceId: this.activeDeviceId,
+        outputDeviceId: this.activeOutputDeviceId,
+        gateThreshold: this.gateParams.threshold,
+        gateEnabled: this.gateParams.enabled,
+        isAntiFeedback: this.isAntiFeedbackActive,
+      };
+      localStorage.setItem('hnstudio_audio_config', JSON.stringify(config));
+    } catch {}
+  }
+
+  public loadSavedAudioConfig() {
+    try {
+      const raw = localStorage.getItem('hnstudio_audio_config');
+      if (raw) {
+        const config = JSON.parse(raw);
+        if (config.inputDeviceId) this.activeDeviceId = config.inputDeviceId;
+        if (config.outputDeviceId) this.activeOutputDeviceId = config.outputDeviceId;
+        if (config.gateThreshold !== undefined) this.gateParams.threshold = config.gateThreshold;
+        if (config.gateEnabled !== undefined) this.gateParams.enabled = config.gateEnabled;
+        if (config.isAntiFeedback !== undefined) this.setAntiFeedback(config.isAntiFeedback);
+      }
+    } catch {}
+  }
+
   public async switchInputDevice(deviceId: string): Promise<boolean> {
     this.activeDeviceId = deviceId;
+    this.saveAudioConfig();
     if (this.isLive) {
       this.stopLiveMic();
       return await this.startLiveMic(deviceId);
@@ -628,7 +685,7 @@ export class WebAudioEngine {
     }, 25);
   }
 
-  // --- Impulse Response Synthesis for Reverb ---
+  // --- Impulse Response Synthesis for Reverb (RMS Normalized to prevent clipping/explosions) ---
   public createReverbImpulse(convolver: ConvolverNode | null, durationSec: number, decay: number) {
     if (!this.ctx || !convolver) return;
     const sampleRate = this.ctx.sampleRate;
@@ -637,12 +694,31 @@ export class WebAudioEngine {
     const left = impulse.getChannelData(0);
     const right = impulse.getChannelData(1);
 
+    let sumSqLeft = 0;
+    let sumSqRight = 0;
+
     for (let i = 0; i < length; i++) {
       const n = i / length;
-      const envelope = Math.pow(1 - n, decay * 3.5);
+      // True exponential acoustic room decay
+      const envelope = Math.exp(-n * decay * 4.5);
       left[i] = (Math.random() * 2 - 1) * envelope;
       right[i] = (Math.random() * 2 - 1) * envelope;
+      sumSqLeft += left[i] * left[i];
+      sumSqRight += right[i] * right[i];
     }
+
+    // Strictly normalize RMS energy to -15dB (0.18) so it NEVER self-oscillates or pops
+    const normLeft = Math.sqrt(sumSqLeft);
+    const normRight = Math.sqrt(sumSqRight);
+    const targetGain = 0.18;
+
+    if (normLeft > 0) {
+      for (let i = 0; i < length; i++) left[i] = (left[i] / normLeft) * targetGain;
+    }
+    if (normRight > 0) {
+      for (let i = 0; i < length; i++) right[i] = (right[i] / normRight) * targetGain;
+    }
+
     convolver.buffer = impulse;
   }
 

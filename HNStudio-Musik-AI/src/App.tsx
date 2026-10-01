@@ -11,6 +11,7 @@ import { RecordingSection } from './components/RecordingSection';
 import { Popups } from './components/Popups';
 import { ProjectCodeViewer } from './components/ProjectCodeViewer';
 import { VstSettingsModal } from './components/VstSettingsModal';
+import { AudioSettingsModal } from './components/AudioSettingsModal';
 import { audioEngineInstance, DEFAULT_EQ_FREQS } from './services/webAudioEngine';
 import { Sparkles, Shield, Headphones, Check, Zap, AlertCircle } from 'lucide-react';
 import {
@@ -33,6 +34,7 @@ export default function App() {
   const [activePopup, setActivePopup] = useState<string | null>(null);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isVstSettingsOpen, setIsVstSettingsOpen] = useState(false);
+  const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
 
   // Anti-Feedback Suppressor state (Default ON to prevent mic howling)
   const [isAntiFeedback, setIsAntiFeedback] = useState(true);
@@ -469,7 +471,13 @@ export default function App() {
       <Header
         isLive={isLive}
         onToggleLive={handleToggleLive}
-        onOpenPopup={(id) => setActivePopup(id)}
+        onOpenPopup={(id) => {
+          if (id === 'audio_io') {
+            setIsAudioSettingsOpen(true);
+          } else {
+            setActivePopup(id);
+          }
+        }}
         onNewProject={handleNewProject}
         onSaveProject={handleSaveProject}
         onOpenProject={handleOpenProject}
@@ -661,6 +669,11 @@ export default function App() {
       <ProjectCodeViewer
         isOpen={isCodeViewerOpen}
         onClose={() => setIsCodeViewerOpen(false)}
+      />
+
+      <AudioSettingsModal
+        isOpen={isAudioSettingsOpen}
+        onClose={() => setIsAudioSettingsOpen(false)}
       />
 
       {/* AI AUTO-DSP SCANNING MODAL */}
