@@ -726,13 +726,25 @@ export const Popups: React.FC<PopupsProps> = ({
               <p className="text-[10px] text-[#64748b] mt-1">Lấy trực tiếp âm thanh phát ra từ Windows/YouTube qua kênh ảo CABLE Output.</p>
             </div>
 
-            <button
+             <button
               onClick={handleScan}
               disabled={isScanning}
               className="w-full py-2 bg-[#1e293b] hover:bg-[#25334e] text-xs text-[#00f0ff] font-bold rounded-lg border border-[#00f0ff]/30 transition-all cursor-pointer disabled:opacity-40"
             >
               {isScanning ? 'ĐANG QUÉT THIẾT BỊ...' : '🔄 QUÉT LẠI THIẾT BỊ'}
             </button>
+
+            {/* Native Sound Settings Button if in Electron */}
+            {typeof window !== 'undefined' && (window as any).electronAPI && (
+              <button
+                onClick={() => {
+                  (window as any).electronAPI.openSoundSettings();
+                }}
+                className="w-full py-2 bg-[#f59e0b]/10 hover:bg-[#f59e0b]/20 text-xs text-[#f59e0b] font-bold rounded-lg border border-[#f59e0b]/30 transition-all cursor-pointer mt-2"
+              >
+                ⚙️ MỞ SOUND CONTROL PANEL
+              </button>
+            )}
           </div>
 
           {/* RIGHT: OUTPUTS */}

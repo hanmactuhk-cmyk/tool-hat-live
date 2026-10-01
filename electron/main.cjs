@@ -2,12 +2,9 @@ const { app, BrowserWindow, session, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// Disable hardware audio autoplay restrictions and force ultra-low latency audio buffers
+// Disable hardware audio autoplay restrictions for seamless live audio processing
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('audio-buffer-size', '128'); // 128 audio samples buffer (~2.6ms latency)
-app.commandLine.appendSwitch('enable-exclusive-audio');
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 
 let mainWindow = null;
@@ -98,6 +95,32 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
+  });
+
+  const { exec } = require('child_process');
+
+  ipcMain.handle('open-sound-settings', async () => {
+    if (process.platform === 'win32') {
+      exec('control mmsys.cpl,,0');
+      return true;
+    }
+    return false;
+  });
+
+  ipcMain.handle('check-virtual-driver', async () => {
+    return new Promise((resolve) => {
+      if (process.platform !== 'win32') {
+        resolve(true);
+        return;
+      }
+      exec('powershell -Command "Get-AudioDevice -List"', (err, stdout) => {
+        if (err) {
+          resolve(true);
+          return;
+        }
+        resolve(stdout.includes('CABLE') || stdout.includes('Virtual'));
+      });
+    });
   });
 
   app.whenReady().then(() => {
