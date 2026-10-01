@@ -1,7 +1,53 @@
 #include "AudioEngine.h"
 #include <cmath>
 
+// =========================================================================
+// SystemAudioCallback Implementation (Dedicated CABLE Output Input stream)
+// =========================================================================
+AudioEngine::SystemAudioCallback::SystemAudioCallback(AudioEngine& ownerEngine)
+    : engine(ownerEngine)
+{
+}
+
+void AudioEngine::SystemAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* device)
+{
+    if (device != nullptr)
+    {
+        DBG("[HNSTUDIO SYSTEM] CABLE Output opened = YES");
+        DBG("[HNSTUDIO SYSTEM] Input channels = " + juce::String(device->getActiveInputChannels().countNumberOfSetBits()));
+        DBG("[HNSTUDIO SYSTEM] Sample rate = " + juce::String(device->getCurrentSampleRate()));
+        DBG("[HNSTUDIO SYSTEM] Buffer size = " + juce::String(device->getCurrentBufferSizeSamples()));
+        DBG("[HNSTUDIO SYSTEM] Audio callback started = YES");
+    }
+}
+
+void AudioEngine::SystemAudioCallback::audioDeviceStopped()
+{
+    DBG("[HNSTUDIO SYSTEM] CABLE Output device stopped.");
+}
+
+void AudioEngine::SystemAudioCallback::audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
+                                                                       int numInputChannels,
+                                                                       float* const* /*outputChannelData*/,
+                                                                       int /*numOutputChannels*/,
+                                                                       int numSamples,
+                                                                       const juce::AudioIODeviceCallbackContext& /*context*/)
+{
+    if (numSamples <= 0) return;
+    engine.processSystemAudioBlock(inputChannelData, numInputChannels, numSamples);
+}
+
+void AudioEngine::SystemAudioCallback::audioDeviceError(const juce::String& errorMessage)
+{
+    DBG("[HNSTUDIO SYSTEM ERROR] CABLE Output error: " + errorMessage);
+}
+
+
+// =========================================================================
+// AudioEngine Implementation
+// =========================================================================
 AudioEngine::AudioEngine()
+    : systemAudioCallback(*this)
 {
     deviceManager.addChangeListener(this);
 }
@@ -15,32 +61,74 @@ AudioEngine::~AudioEngine()
 bool AudioEngine::initAudioDevice()
 {
     try {
-        juce::AudioDeviceManager::AudioDeviceSetup setup;
-        deviceManager.getAudioDeviceSetup(setup);
-        
-        // Check if VB-CABLE is available
-        bool cableAvailable = isVirtualDriverInstalled();
-        if (cableAvailable)
+        // 1. Initialize Primary Device Manager (Mic Input + Monitor Output)
+        juce::String err = deviceManager.initialiseWithDefaultDevices(2, 2);
+        if (err.isNotEmpty())
         {
-            setup.inputDeviceName = "CABLE Output";
-            setup.outputDeviceName = setup.outputDeviceName.isNotEmpty() ? setup.outputDeviceName : deviceManager.getDefaultAudioDeviceName(false);
-            setup.sampleRate = 44100.0;
-            setup.bufferSize = 512;
-            
-            juce::String err = deviceManager.setAudioDeviceSetup(setup, true);
-            if (err.isNotEmpty())
+            err = deviceManager.initialiseWithDefaultDevices(0, 2);
+        }
+
+        if (err.isNotEmpty())
+        {
+            lastDeviceError = "Khởi tạo thiết bị âm thanh chính thất bại: " + err;
+            DBG("[HNSTUDIO ERROR] " + lastDeviceError);
+            return false;
+        }
+
+        deviceManager.addAudioCallback(this);
+
+        auto* micDev = deviceManager.getCurrentAudioDevice();
+        if (micDev != nullptr)
+        {
+            DBG("[HNSTUDIO MIC] Mic device = " + micDev->getName());
+            DBG("[HNSTUDIO MIC] Mic input channels = " + juce::String(micDev->getActiveInputChannels().countNumberOfSetBits()));
+            DBG("[HNSTUDIO MIC] Mic opened = YES");
+            DBG("[HNSTUDIO MIC] Mic callback = YES");
+        }
+        else
+        {
+            DBG("[HNSTUDIO MIC] Mic device = NONE / OUTPUT ONLY");
+        }
+
+        // 2. Initialize Secondary System Device Manager (CABLE Output Input)
+        if (isVirtualDriverInstalled())
+        {
+            DBG("[HNSTUDIO VIRTUAL] VB-CABLE detected = YES");
+            juce::AudioDeviceManager::AudioDeviceSetup sysSetup;
+            systemDeviceManager.getAudioDeviceSetup(sysSetup);
+            sysSetup.inputDeviceName = "CABLE Output";
+            sysSetup.outputDeviceName = ""; // Input only for system audio capture
+            sysSetup.sampleRate = 44100.0;
+            sysSetup.bufferSize = 512;
+
+            juce::String sysErr = systemDeviceManager.setAudioDeviceSetup(sysSetup, true);
+            if (sysErr.isNotEmpty())
             {
-                deviceManager.initialiseWithDefaultDevices(2, 2);
+                // Try initialising with CABLE Output explicitly
+                sysErr = systemDeviceManager.initialise(2, 0, nullptr, true, "CABLE Output", nullptr);
+            }
+
+            if (sysErr.isNotEmpty())
+            {
+                DBG("[HNSTUDIO VIRTUAL ERROR] Không thể mở CABLE Output: " + sysErr);
+            }
+            else
+            {
+                systemDeviceManager.addAudioCallback(&systemAudioCallback);
+                DBG("[HNSTUDIO VIRTUAL] CABLE Output opened = YES");
             }
         }
         else
         {
-            deviceManager.initialiseWithDefaultDevices(2, 2);
-            lastDeviceError = "VB-CABLE NOT INSTALLED: Vui lòng cài đặt VB-Audio VB-CABLE để sử dụng tính năng định tuyến System Audio!";
+            DBG("[HNSTUDIO VIRTUAL] VB-CABLE detected = NO (Vui lòng cài đặt VB-CABLE)");
         }
 
-        deviceManager.addAudioCallback(this);
         return true;
+    }
+    catch (const std::exception& e) {
+        lastDeviceError = juce::String("Exception khi khởi tạo audio: ") + e.what();
+        DBG("[HNSTUDIO EXCEPTION] " + lastDeviceError);
+        return false;
     }
     catch (...) {
         return false;
@@ -50,6 +138,9 @@ bool AudioEngine::initAudioDevice()
 void AudioEngine::closeAudioDevice()
 {
     setLiveEnabled(false);
+    systemDeviceManager.removeAudioCallback(&systemAudioCallback);
+    systemDeviceManager.closeAudioDevice();
+
     deviceManager.removeAudioCallback(this);
     deviceManager.closeAudioDevice();
 }
@@ -87,8 +178,7 @@ bool AudioEngine::isVirtualDriverInstalled() const
                 hasCableIn = true;
         }
 
-        if (hasCableOut && hasCableIn)
-            return true;
+        return hasCableOut && hasCableIn;
     }
    #endif
     return true;
@@ -96,8 +186,6 @@ bool AudioEngine::isVirtualDriverInstalled() const
 
 bool AudioEngine::installVirtualDriver()
 {
-    // VB-CABLE must be installed by the official VB-Audio installer setup.exe
-    // We provide direct guidance and check status.
     return isVirtualDriverInstalled();
 }
 
@@ -109,18 +197,17 @@ void AudioEngine::saveAndRedirectWindowsDefaultAudio(bool liveOn)
     if (liveOn)
     {
         savedDefaultDeviceName = setup.outputDeviceName;
-        // Switch Windows Default Output / Device Setup output to "CABLE Input"
         setup.outputDeviceName = "CABLE Input";
-        setup.inputDeviceName = "CABLE Output";
         deviceManager.setAudioDeviceSetup(setup, true);
+        DBG("[HNSTUDIO ROUTING] Windows Default Output -> CABLE Input (LIVE ON)");
     }
     else
     {
-        // Restore previous default output device
         if (savedDefaultDeviceName.isNotEmpty())
         {
             setup.outputDeviceName = savedDefaultDeviceName;
             deviceManager.setAudioDeviceSetup(setup, true);
+            DBG("[HNSTUDIO ROUTING] Windows Default Output restored -> " + savedDefaultDeviceName + " (LIVE OFF)");
         }
     }
 }
@@ -156,6 +243,46 @@ void AudioEngine::audioDeviceStopped()
     musicPlayer.release();
 }
 
+// System Audio Callback Processor (from CABLE Output)
+void AudioEngine::processSystemAudioBlock(const float* const* inputChannelData, int numInputChannels, int numSamples)
+{
+    if (numSamples <= 0 || systemBusBuffer.getNumSamples() < numSamples) return;
+
+    systemBusBuffer.clear();
+
+    if (inputChannelData != nullptr && numInputChannels >= 2)
+    {
+        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+        systemBusBuffer.copyFrom(1, 0, inputChannelData[1], numSamples);
+    }
+    else if (inputChannelData != nullptr && numInputChannels == 1)
+    {
+        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+        systemBusBuffer.copyFrom(1, 0, inputChannelData[0], numSamples);
+    }
+
+    // System FX / VST3 Chain
+    systemDspChain.process(systemBusBuffer);
+    systemMidiBuffer.clear();
+    systemVstRack.process(systemBusBuffer, systemMidiBuffer);
+
+    float currentSystemVol = systemVolume.load();
+    systemBusBuffer.applyGain(currentSystemVol);
+
+    float sysRms = systemBusBuffer.getRMSLevel(0, 0, numSamples);
+    systemLevelRms.store(sysRms);
+    systemLevelPeak.store(systemBusBuffer.getMagnitude(0, 0, numSamples));
+
+    const auto* sysSamples = systemBusBuffer.getReadPointer(0);
+    int sysWrite = systemFifoWritePos.load();
+    for (int i = 0; i < numSamples; ++i)
+    {
+        systemWaveformFifo[(sysWrite + i) % WaveformBufferSize] = sysSamples[i];
+    }
+    systemFifoWritePos.store((sysWrite + numSamples) % WaveformBufferSize);
+}
+
+// Primary Audio Callback (Microphone Input + Master Mixer + Monitor Output)
 void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
                                                   int numInputChannels,
                                                   float* const* outputChannelData,
@@ -169,14 +296,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     if (micBusBuffer.getNumSamples() < numSamples)
     {
         micBusBuffer.setSize(2, numSamples, false, false, true);
-        systemBusBuffer.setSize(2, numSamples, false, false, true);
         musicBusBuffer.setSize(2, numSamples, false, false, true);
         masterBusBuffer.setSize(2, numSamples, false, false, true);
         virtualMicOutputBuffer.setSize(2, numSamples, false, false, true);
     }
 
     micBusBuffer.clear();
-    systemBusBuffer.clear();
     musicBusBuffer.clear();
     masterBusBuffer.clear();
     virtualMicOutputBuffer.clear();
@@ -190,94 +315,57 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
         }
         micLevelPeak.store(0.0f);
         micLevelRms.store(0.0f);
-        systemLevelPeak.store(0.0f);
-        systemLevelRms.store(0.0f);
         outputLevelPeak.store(0.0f);
         outputLevelRms.store(0.0f);
         return;
     }
 
     // =========================================================================
-    // 1. SYSTEM AUDIO CHANNEL (VB-CABLE Output -> HNSTUDIO System Channel)
+    // 1. MICROPHONE CHANNEL
     // =========================================================================
-    if (inputChannelData != nullptr && numInputChannels >= 2)
+    if (inputChannelData != nullptr && numInputChannels > 0)
     {
-        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
-        systemBusBuffer.copyFrom(1, 0, inputChannelData[1], numSamples);
+        if (numInputChannels >= 2)
+        {
+            micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+            micBusBuffer.copyFrom(1, 0, inputChannelData[1], numSamples);
+        }
+        else
+        {
+            micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+            micBusBuffer.copyFrom(1, 0, inputChannelData[0], numSamples);
+        }
+
+        dspChain.process(micBusBuffer);
+        midiBuffer.clear();
+        vstRack.process(micBusBuffer, midiBuffer);
+
+        float currentMicVol = micVolume.load();
+        micBusBuffer.applyGain(currentMicVol);
+
+        float micRms = micBusBuffer.getRMSLevel(0, 0, numSamples);
+        micLevelPeak.store(micBusBuffer.getMagnitude(0, 0, numSamples));
+        micLevelRms.store(micRms);
+
+        const auto* micSamples = micBusBuffer.getReadPointer(0);
+        int writePos = micFifoWritePos.load();
+        for (int i = 0; i < numSamples; ++i)
+        {
+            micWaveformFifo[(writePos + i) % WaveformBufferSize] = micSamples[i];
+        }
+        micFifoWritePos.store((writePos + numSamples) % WaveformBufferSize);
+
+        autoKeyDetector.process(micBusBuffer);
     }
-    else if (inputChannelData != nullptr && numInputChannels == 1)
+    else
     {
-        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
-        systemBusBuffer.copyFrom(1, 0, inputChannelData[0], numSamples);
+        micLevelPeak.store(0.0f);
+        micLevelRms.store(0.0f);
     }
-
-    // System FX / VST3 Chain (Independent of Mic)
-    systemDspChain.process(systemBusBuffer);
-    systemMidiBuffer.clear();
-    systemVstRack.process(systemBusBuffer, systemMidiBuffer);
-
-    float currentSystemVol = systemVolume.load();
-    systemBusBuffer.applyGain(currentSystemVol);
-
-    float sysPeakL = systemBusBuffer.getMagnitude(0, 0, numSamples);
-    float sysPeakR = systemBusBuffer.getMagnitude(1, 0, numSamples);
-    float sysRmsL  = systemBusBuffer.getRMSLevel(0, 0, numSamples);
-    float sysRmsR  = systemBusBuffer.getRMSLevel(1, 0, numSamples);
-    systemLevelPeak.store(std::max(sysPeakL, sysPeakR));
-    systemLevelRms.store(std::max(sysRmsL, sysRmsR));
-
-    const auto* sysSamples = systemBusBuffer.getReadPointer(0);
-    int sysWrite = systemFifoWritePos.load();
-    for (int i = 0; i < numSamples; ++i)
-    {
-        systemWaveformFifo[(sysWrite + i) % WaveformBufferSize] = sysSamples[i];
-    }
-    systemFifoWritePos.store((sysWrite + numSamples) % WaveformBufferSize);
-
-
-    // =========================================================================
-    // 2. MICROPHONE CHANNEL (Strict Isolation)
-    // Microphone -> Mic Input -> Gate -> EQ -> Comp -> De-Esser -> VST3 -> Reverb
-    // =========================================================================
-    if (inputChannelData != nullptr && numInputChannels > 2)
-    {
-        // If device opens multi-channel (System + Mic combined or dedicated mic channel)
-        micBusBuffer.copyFrom(0, 0, inputChannelData[2], numSamples);
-        micBusBuffer.copyFrom(1, 0, inputChannelData[numInputChannels > 3 ? 3 : 2], numSamples);
-    }
-    else if (inputChannelData != nullptr && numInputChannels > 0 && !isVirtualDriverInstalled())
-    {
-        micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
-        micBusBuffer.copyFrom(1, 0, inputChannelData[1 > numInputChannels - 1 ? 0 : 1], numSamples);
-    }
-
-    dspChain.process(micBusBuffer);
-    midiBuffer.clear();
-    vstRack.process(micBusBuffer, midiBuffer);
-
-    float currentMicVol = micVolume.load();
-    micBusBuffer.applyGain(currentMicVol);
-
-    float peakL = micBusBuffer.getMagnitude(0, 0, numSamples);
-    float peakR = micBusBuffer.getMagnitude(1, 0, numSamples);
-    float rmsL  = micBusBuffer.getRMSLevel(0, 0, numSamples);
-    float rmsR  = micBusBuffer.getRMSLevel(1, 0, numSamples);
-    micLevelPeak.store(std::max(peakL, peakR));
-    micLevelRms.store(std::max(rmsL, rmsR));
-
-    const auto* micSamples = micBusBuffer.getReadPointer(0);
-    int writePos = micFifoWritePos.load();
-    for (int i = 0; i < numSamples; ++i)
-    {
-        micWaveformFifo[(writePos + i) % WaveformBufferSize] = micSamples[i];
-    }
-    micFifoWritePos.store((writePos + numSamples) % WaveformBufferSize);
-
-    autoKeyDetector.process(micBusBuffer);
 
 
     // =========================================================================
-    // 3. MUSIC BUS & SFX
+    // 2. MUSIC BUS & SFX
     // =========================================================================
     juce::AudioSourceChannelInfo musicInfo(&musicBusBuffer, 0, numSamples);
     musicPlayer.getNextAudioBlock(musicInfo);
@@ -285,7 +373,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
 
 
     // =========================================================================
-    // 4. MASTER BUS (System + Mic + Music -> Master Limiter)
+    // 3. MASTER BUS (System Bus + Mic Bus + Music Bus -> Master Limiter)
     // =========================================================================
     masterBusBuffer.addFrom(0, 0, systemBusBuffer, 0, 0, numSamples);
     masterBusBuffer.addFrom(1, 0, systemBusBuffer, 1, 0, numSamples);
@@ -301,19 +389,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     float currentMasterVol = masterVolume.load();
     masterBusBuffer.applyGain(currentMasterVol);
 
-    // OBS Virtual Microphone Output Buffer
     virtualMicOutputBuffer.copyFrom(0, 0, masterBusBuffer, 0, 0, numSamples);
     virtualMicOutputBuffer.copyFrom(1, 0, masterBusBuffer, 1, 0, numSamples);
 
-    // Metering
-    float outPeakL = masterBusBuffer.getMagnitude(0, 0, numSamples);
-    float outPeakR = masterBusBuffer.getMagnitude(1, 0, numSamples);
-    float outRmsL  = masterBusBuffer.getRMSLevel(0, 0, numSamples);
-    float outRmsR  = masterBusBuffer.getRMSLevel(1, 0, numSamples);
-    float maxOutPeak = std::max(outPeakL, outPeakR);
+    float outRms = masterBusBuffer.getRMSLevel(0, 0, numSamples);
+    float maxOutPeak = masterBusBuffer.getMagnitude(0, 0, numSamples);
 
     outputLevelPeak.store(maxOutPeak);
-    outputLevelRms.store(std::max(outRmsL, outRmsR));
+    outputLevelRms.store(outRms);
 
     if (maxOutPeak >= 0.999f)
     {
@@ -330,9 +413,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     }
     outFifoWritePos.store((outWrite + numSamples) % WaveformBufferSize);
 
+    // Periodic Diagnostic Logging in Audio Callback
+    if (++logCounter >= 100) // Log every ~100 blocks
+    {
+        logCounter = 0;
+        DBG("[HNSTUDIO METRICS] System RMS: " + juce::String(systemLevelRms.load(), 4) +
+            " | Mic RMS: " + juce::String(micLevelRms.load(), 4) +
+            " | Master RMS: " + juce::String(outputLevelRms.load(), 4));
+    }
+
 
     // =========================================================================
-    // 5. MONITOR OUTPUT (Loa / Headphone if MONITOR ON)
+    // 4. MONITOR OUTPUT (Loa / Headphone if MONITOR ON)
     // =========================================================================
     bool monitorOn = isMonitorOn.load();
     for (int ch = 0; ch < numOutputChannels; ++ch)
@@ -357,6 +449,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
 void AudioEngine::audioDeviceError(const juce::String& errorMessage)
 {
     lastDeviceError = "Lỗi thiết bị âm thanh: " + errorMessage;
+    DBG("[HNSTUDIO ERROR] " + lastDeviceError);
 }
 
 void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)

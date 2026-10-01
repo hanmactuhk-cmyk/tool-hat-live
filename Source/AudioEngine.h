@@ -20,7 +20,7 @@ public:
     bool initAudioDevice();
     void closeAudioDevice();
 
-    // AudioIODeviceCallback
+    // Primary AudioIODeviceCallback (Mic Input + Monitor Output)
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
@@ -31,11 +31,32 @@ public:
                                          const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceError(const juce::String& errorMessage) override;
 
+    // Secondary System Audio Callback (CABLE Output Input)
+    class SystemAudioCallback : public juce::AudioIODeviceCallback
+    {
+    public:
+        SystemAudioCallback(AudioEngine& ownerEngine);
+        void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
+        void audioDeviceStopped() override;
+        void audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
+                                             int numInputChannels,
+                                             float* const* outputChannelData,
+                                             int numOutputChannels,
+                                             int numSamples,
+                                             const juce::AudioIODeviceCallbackContext& context) override;
+        void audioDeviceError(const juce::String& errorMessage) override;
+    private:
+        AudioEngine& engine;
+    };
+
+    SystemAudioCallback systemAudioCallback;
+
     // ChangeListener (device changes)
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
     // Components
     juce::AudioDeviceManager& getDeviceManager() { return deviceManager; }
+    juce::AudioDeviceManager& getSystemDeviceManager() { return systemDeviceManager; }
     DspChain& getDspChain() { return dspChain; }
     DspChain& getSystemDspChain() { return systemDspChain; }
     VstRack& getVstRack() { return vstRack; }
@@ -92,10 +113,15 @@ public:
     bool hasDeviceError() const { return lastDeviceError.isNotEmpty(); }
     void clearDeviceError() { lastDeviceError = ""; }
 
+    // Internal system audio block processor called from SystemAudioCallback
+    void processSystemAudioBlock(const float* const* inputChannelData, int numInputChannels, int numSamples);
+
 private:
     void saveAndRedirectWindowsDefaultAudio(bool liveOn);
 
-    juce::AudioDeviceManager deviceManager;
+    juce::AudioDeviceManager deviceManager;       // Primary: Mic Input + Monitor Output
+    juce::AudioDeviceManager systemDeviceManager; // Secondary: CABLE Output Input (System Audio)
+
     DspChain dspChain;          // Mic FX chain
     DspChain systemDspChain;    // System Audio FX chain
     VstRack vstRack;            // Mic VST3 rack
@@ -125,7 +151,7 @@ private:
     juce::AudioBuffer<float> systemBusBuffer;
     juce::AudioBuffer<float> musicBusBuffer;
     juce::AudioBuffer<float> masterBusBuffer;
-    juce::AudioBuffer<float> virtualMicOutputBuffer; // Sent to OBS Virtual Microphone
+    juce::AudioBuffer<float> virtualMicOutputBuffer;
     juce::MidiBuffer midiBuffer;
     juce::MidiBuffer systemMidiBuffer;
 
@@ -141,6 +167,7 @@ private:
     juce::String lastDeviceError;
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
+    int logCounter = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };
