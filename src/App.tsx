@@ -3,27 +3,20 @@ import { Header } from './components/Header';
 import { Oscilloscope } from './components/Oscilloscope';
 import { ChannelStrips } from './components/ChannelStrip';
 import { DspToolbar } from './components/DspToolbar';
-import { ExternalVstBar } from './components/ExternalVstBar';
 import { VstPanel } from './components/VstPanel';
-import { ExternalAudioSection } from './components/ExternalAudioSection';
+import { MusicPlayerSection } from './components/MusicPlayerSection';
 import { SfxSection } from './components/SfxSection';
 import { RecordingSection } from './components/RecordingSection';
 import { Popups } from './components/Popups';
 import { ProjectCodeViewer } from './components/ProjectCodeViewer';
 import { VstSettingsModal } from './components/VstSettingsModal';
-import { AudioSettingsModal } from './components/AudioSettingsModal';
-import { AsioMatrixModal } from './components/AsioMatrixModal';
 import { audioEngineInstance, DEFAULT_EQ_FREQS } from './services/webAudioEngine';
-import { Sparkles, Shield, Headphones, Check, Zap, AlertCircle } from 'lucide-react';
 import {
   BandSetting,
   NoiseGateParams,
   CompressorParams,
   DeEsserParams,
   ReverbParams,
-  ShortReverbParams,
-  LongReverbParams,
-  EchoDelayParams,
   LimiterParams,
   AutoKeyParams,
   VstPluginSlot,
@@ -35,17 +28,6 @@ export default function App() {
   const [activePopup, setActivePopup] = useState<string | null>(null);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isVstSettingsOpen, setIsVstSettingsOpen] = useState(false);
-  const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
-  const [isAsioModalOpen, setIsAsioModalOpen] = useState(false);
-
-  // Anti-Feedback Suppressor state (Default ON to prevent mic howling)
-  const [isAntiFeedback, setIsAntiFeedback] = useState(true);
-
-  // AI Auto-DSP Calibration states
-  const [isAutoDspScanning, setIsAutoDspScanning] = useState(false);
-  const [autoDspStepMsg, setAutoDspStepMsg] = useState('');
-  const [autoDspPercent, setAutoDspPercent] = useState(0);
-  const [autoDspSuccessMsg, setAutoDspSuccessMsg] = useState<string | null>(null);
 
   // Volumes
   const [micVolume, setMicVolume] = useState(1.0);
@@ -65,8 +47,8 @@ export default function App() {
   const [noiseGate, setNoiseGate] = useState<NoiseGateParams>({
     enabled: true,
     threshold: -45,
-    attack: 4,
-    release: 110,
+    attack: 5,
+    release: 120,
     range: -60,
   });
 
@@ -74,8 +56,8 @@ export default function App() {
     enabled: true,
     threshold: -18,
     ratio: 3.5,
-    attack: 12,
-    release: 130,
+    attack: 15,
+    release: 140,
     makeupGain: 3,
   });
 
@@ -92,44 +74,19 @@ export default function App() {
   const [deEsser, setDeEsser] = useState<DeEsserParams>({
     enabled: true,
     frequency: 6500,
-    threshold: -22,
-    amount: 0.6,
+    threshold: -24,
+    amount: 0.5,
   });
 
   const [reverb, setReverb] = useState<ReverbParams>({
     enabled: true,
-    roomSize: 0.58,
-    damping: 0.42,
-    width: 0.88,
-    wet: 0.32,
+    roomSize: 0.6,
+    damping: 0.45,
+    width: 0.85,
+    wet: 0.35,
     dry: 1.0,
-    preDelay: 22,
-    preset: 'Vocal Studio',
-  });
-
-  // Vang Ngắn (Short Reverb - Plate & Room)
-  const [shortReverb, setShortReverb] = useState<ShortReverbParams>({
-    enabled: true,
-    decay: 0.9,
-    wet: 0.28,
-    damping: 0.55,
-  });
-
-  // Vang Dài (Long Reverb - Hall & Cathedral)
-  const [longReverb, setLongReverb] = useState<LongReverbParams>({
-    enabled: true,
-    decay: 3.2,
-    wet: 0.22,
-    damping: 0.35,
-  });
-
-  // Echo / Delay (Tiếng vọng Stereo Tape Delay)
-  const [echoDelay, setEchoDelay] = useState<EchoDelayParams>({
-    enabled: true,
-    time: 240,
-    feedback: 0.38,
-    wet: 0.26,
-    hiCut: 3500,
+    preDelay: 25,
+    preset: 'Vocal',
   });
 
   const [limiter, setLimiter] = useState<LimiterParams>({
@@ -225,41 +182,8 @@ export default function App() {
       audioEngineInstance.stopLiveMic();
       setIsLive(false);
     } else {
-      // Ensure Anti-Feedback is active before opening live mic
-      audioEngineInstance.setAntiFeedback(isAntiFeedback);
       const ok = await audioEngineInstance.startLiveMic();
       if (ok) setIsLive(true);
-    }
-  };
-
-  const handleToggleAntiFeedback = () => {
-    const next = !isAntiFeedback;
-    setIsAntiFeedback(next);
-    audioEngineInstance.setAntiFeedback(next);
-  };
-
-  // AI Auto-DSP Calibration Trigger
-  const handleTriggerAutoDsp = async () => {
-    setIsAutoDspScanning(true);
-    setAutoDspSuccessMsg(null);
-    try {
-      const result = await audioEngineInstance.autoCalibrateVocalDsp((msg, pct) => {
-        setAutoDspStepMsg(msg);
-        setAutoDspPercent(pct);
-      });
-
-      if (result.noiseGate) setNoiseGate((prev) => ({ ...prev, ...result.noiseGate }));
-      if (result.compressor) setCompressor((prev) => ({ ...prev, ...result.compressor }));
-      if (result.deEsser) setDeEsser((prev) => ({ ...prev, ...result.deEsser }));
-      if (result.reverb) setReverb((prev) => ({ ...prev, ...result.reverb }));
-      setIsAntiFeedback(true);
-
-      setAutoDspSuccessMsg(result.message);
-      setTimeout(() => {
-        setIsAutoDspScanning(false);
-      }, 1500);
-    } catch {
-      setIsAutoDspScanning(false);
     }
   };
 
@@ -284,24 +208,6 @@ export default function App() {
   const handleToggleDeEsser = () => {
     const next = !deEsser.enabled;
     setDeEsser((prev) => ({ ...prev, enabled: next }));
-  };
-
-  const handleToggleShortReverb = () => {
-    const next = !shortReverb.enabled;
-    setShortReverb((p) => ({ ...p, enabled: next }));
-    audioEngineInstance.updateShortReverb({ enabled: next });
-  };
-
-  const handleToggleLongReverb = () => {
-    const next = !longReverb.enabled;
-    setLongReverb((p) => ({ ...p, enabled: next }));
-    audioEngineInstance.updateLongReverb({ enabled: next });
-  };
-
-  const handleToggleEchoDelay = () => {
-    const next = !echoDelay.enabled;
-    setEchoDelay((p) => ({ ...p, enabled: next }));
-    audioEngineInstance.updateEchoDelay({ enabled: next });
   };
 
   const handleToggleReverb = () => {
@@ -400,7 +306,6 @@ export default function App() {
       limiter,
       autoKey,
       vstSlots,
-      isAntiFeedback,
     };
     const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -440,10 +345,6 @@ export default function App() {
             if (data.limiter) setLimiter(data.limiter);
             if (data.autoKey) setAutoKey(data.autoKey);
             if (data.vstSlots) setVstSlots(data.vstSlots);
-            if (data.isAntiFeedback !== undefined) {
-              setIsAntiFeedback(data.isAntiFeedback);
-              audioEngineInstance.setAntiFeedback(data.isAntiFeedback);
-            }
             alert('Đã khôi phục thành công cấu hình Project .hnstudio!');
           } catch {
             alert('File cấu hình project không hợp lệ.');
@@ -468,36 +369,28 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen max-h-screen overflow-hidden flex flex-col justify-between bg-[#07090f] text-[#f8fafc] font-sans selection:bg-[#00f0ff]/30 selection:text-white">
-      {/* Top Header (Slim 42px) */}
+    <div className="min-h-screen bg-[#07090f] text-[#f8fafc] flex flex-col font-sans selection:bg-[#00f0ff]/30 selection:text-white">
+      {/* Top Header */}
       <Header
         isLive={isLive}
         onToggleLive={handleToggleLive}
-        onOpenPopup={(id) => {
-          if (id === 'audio_io') {
-            setIsAsioModalOpen(true);
-          } else {
-            setActivePopup(id);
-          }
-        }}
+        onOpenPopup={(id) => setActivePopup(id)}
         onNewProject={handleNewProject}
         onSaveProject={handleSaveProject}
         onOpenProject={handleOpenProject}
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
         onOpenVstSettings={() => setIsVstSettingsOpen(true)}
         currentKey={`${autoKey.currentKey} ${autoKey.isMajor ? 'Maj' : 'Min'}`}
-        isAntiFeedback={isAntiFeedback}
-        onToggleAntiFeedback={handleToggleAntiFeedback}
-        onTriggerAutoDsp={handleTriggerAutoDsp}
-        isAutoDspScanning={isAutoDspScanning}
       />
 
-      {/* Main Studio Viewport (Fitted 100vh) */}
-      <main className="flex-1 w-full p-2 flex flex-col justify-between gap-1.5 overflow-hidden">
-        {/* ROW 1: Oscilloscope & Faders */}
-        <div className="flex flex-row gap-2 items-stretch h-[155px] flex-shrink-0">
+      {/* Main Studio Console Content */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 space-y-3">
+        {/* Top Section: Channels & Realtime Waveform */}
+        <div className="flex flex-col lg:flex-row gap-3">
+          {/* Realtime Waveform Oscilloscope */}
           <Oscilloscope isLive={isLive} />
 
+          {/* Faders & VU Meters */}
           <ChannelStrips
             micVolume={micVolume}
             onMicVolumeChange={handleMicVolumeChange}
@@ -510,94 +403,51 @@ export default function App() {
           />
         </div>
 
-        {/* ROW 2: DSP Quick Bar (Gate, Comp, 13-EQ, De-Esser, Vang Ngắn, Vang Dài, Echo Delay, Limiter) */}
+        {/* DSP Quick Toolbar */}
         <DspToolbar
           noiseGate={noiseGate}
           compressor={compressor}
           eqEnabled={eqEnabled}
           deEsser={deEsser}
-          shortReverb={shortReverb}
-          longReverb={longReverb}
-          echoDelay={echoDelay}
+          reverb={reverb}
           limiter={limiter}
           onToggleGate={handleToggleGate}
           onToggleComp={handleToggleComp}
           onToggleEq={handleToggleEq}
           onToggleDeEsser={handleToggleDeEsser}
-          onToggleShortReverb={handleToggleShortReverb}
-          onToggleLongReverb={handleToggleLongReverb}
-          onToggleEchoDelay={handleToggleEchoDelay}
+          onToggleReverb={handleToggleReverb}
           onToggleLimiter={handleToggleLimiter}
           onOpenPopup={(id) => setActivePopup(id)}
         />
 
-        {/* ROW 2.5: DÒNG NGANG SỬ DỤNG VST BÊN NGOÀI TOOL (.vst3 / .dll / Host VST) */}
-        <ExternalVstBar
+        {/* Auto-Tune & VST Insert Rack */}
+        <VstPanel
+          autoKey={autoKey}
           vstSlots={vstSlots}
+          onOpenPopup={(id) => setActivePopup(id)}
           onToggleVstBypass={handleToggleVstBypass}
+          onMoveVstUp={handleMoveVstUp}
+          onMoveVstDown={handleMoveVstDown}
           onRemoveVst={handleRemoveVst}
+          onOpenVstEditor={handleOpenVstEditor}
+          onAddVstClick={handleAddVstClick}
           onOpenVstSettings={() => setIsVstSettingsOpen(true)}
-          onAddCustomPlugin={handleAddCustomPlugin}
-          currentKey={`${autoKey.currentKey} ${autoKey.isMajor ? 'Maj' : 'Min'}`}
         />
 
-        {/* ROW 3: External Music & Beat Input Manager */}
-        <div className="flex-1 flex flex-col justify-between gap-1.5 overflow-hidden">
-          {/* Main Area: External Audio Beat & Loopback Ingest */}
-          <div className="flex-1 overflow-y-auto">
-            <ExternalAudioSection
-              musicVolume={musicVolume}
-              onMusicVolumeChange={handleMusicVolumeChange}
-            />
-          </div>
+        {/* Music Player Beat Section */}
+        <MusicPlayerSection
+          musicVolume={musicVolume}
+          onMusicVolumeChange={handleMusicVolumeChange}
+        />
 
-          {/* Bottom Bar: Quick SFX + Recording Bar */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 flex-shrink-0">
-            <div className="bg-[#101622] rounded-xl border border-[#25334e] px-2.5 py-1.5 flex items-center justify-between shadow-md">
-              <div className="flex items-center space-x-1.5">
-                <span className="text-[10px] font-bold text-[#f59e0b] uppercase">SOUNDBOARD:</span>
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={() => audioEngineInstance.playSfx('quick-applause', { preset: 'applause', volume: 1.0 })}
-                    className="px-2 py-1 rounded bg-[#161f30] hover:bg-[#00f0ff]/20 text-[11px] font-medium text-[#cbd5e1] hover:text-[#00f0ff] border border-[#25334e] transition-colors cursor-pointer"
-                  >
-                    👏 Vỗ tay
-                  </button>
-                  <button
-                    onClick={() => audioEngineInstance.playSfx('quick-laugh', { preset: 'laugh', volume: 1.0 })}
-                    className="px-2 py-1 rounded bg-[#161f30] hover:bg-[#f59e0b]/20 text-[11px] font-medium text-[#cbd5e1] hover:text-[#f59e0b] border border-[#25334e] transition-colors cursor-pointer"
-                  >
-                    😂 Cười
-                  </button>
-                  <button
-                    onClick={() => audioEngineInstance.playSfx('quick-horn', { preset: 'horn', volume: 1.0 })}
-                    className="px-2 py-1 rounded bg-[#161f30] hover:bg-[#ff3366]/20 text-[11px] font-medium text-[#cbd5e1] hover:text-[#ff3366] border border-[#25334e] transition-colors cursor-pointer"
-                  >
-                    📢 Còi DJ
-                  </button>
-                  <button
-                    onClick={() => audioEngineInstance.playSfx('quick-crowd', { preset: 'crowd', volume: 1.0 })}
-                    className="px-2 py-1 rounded bg-[#161f30] hover:bg-[#a855f7]/20 text-[11px] font-medium text-[#cbd5e1] hover:text-[#a855f7] border border-[#25334e] transition-colors cursor-pointer"
-                  >
-                    🎉 Hò reo
-                  </button>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setIsVstSettingsOpen(true)}
-                className="text-[10px] text-[#00f0ff] hover:underline font-semibold cursor-pointer"
-              >
-                + Thêm VST3 / SFX
-              </button>
-            </div>
-
-            <RecordingSection />
-          </div>
+        {/* SFX & Recording */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <SfxSection />
+          <RecordingSection />
         </div>
       </main>
 
-      {/* Popups, VST Settings, Code Viewer */}
+      {/* Popups and Code Viewer Modals */}
       <Popups
         activePopup={activePopup}
         onClose={() => setActivePopup(null)}
@@ -630,21 +480,6 @@ export default function App() {
           setReverb((prev) => ({ ...prev, ...p }));
           audioEngineInstance.updateReverb(p);
         }}
-        shortReverb={shortReverb}
-        onUpdateShortReverb={(p) => {
-          setShortReverb((prev) => ({ ...prev, ...p }));
-          audioEngineInstance.updateShortReverb(p);
-        }}
-        longReverb={longReverb}
-        onUpdateLongReverb={(p) => {
-          setLongReverb((prev) => ({ ...prev, ...p }));
-          audioEngineInstance.updateLongReverb(p);
-        }}
-        echoDelay={echoDelay}
-        onUpdateEchoDelay={(p) => {
-          setEchoDelay((prev) => ({ ...prev, ...p }));
-          audioEngineInstance.updateEchoDelay(p);
-        }}
         limiter={limiter}
         onUpdateLimiter={(p) => {
           setLimiter((prev) => ({ ...prev, ...p }));
@@ -673,58 +508,15 @@ export default function App() {
         onClose={() => setIsCodeViewerOpen(false)}
       />
 
-      <AudioSettingsModal
-        isOpen={isAudioSettingsOpen}
-        onClose={() => setIsAudioSettingsOpen(false)}
-      />
-
-      <AsioMatrixModal
-        isOpen={isAsioModalOpen}
-        onClose={() => setIsAsioModalOpen(false)}
-      />
-
-      {/* AI AUTO-DSP SCANNING MODAL */}
-      {isAutoDspScanning && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
-          <div className="w-full max-w-md bg-[#101622] rounded-2xl border border-[#d946ef]/50 p-6 shadow-[0_0_50px_rgba(217,70,239,0.3)] text-center space-y-4">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-[#d946ef] to-[#00f0ff] p-[2px] shadow-[0_0_20px_rgba(217,70,239,0.5)]">
-              <div className="w-full h-full bg-[#0a0d14] rounded-[14px] flex items-center justify-center">
-                <Sparkles className="w-7 h-7 text-[#d946ef] animate-spin" />
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-base font-black text-white tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-[#d946ef] via-[#00f0ff] to-[#00ff88]">
-                AI SMART VOCAL CALIBRATION
-              </h3>
-              <p className="text-xs text-[#94a3b8] mt-1">{autoDspStepMsg}</p>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full bg-[#1e293b] h-2.5 rounded-full overflow-hidden border border-[#25334e]">
-              <div
-                className="h-full bg-gradient-to-r from-[#d946ef] via-[#00f0ff] to-[#00ff88] transition-all duration-300"
-                style={{ width: `${autoDspPercent}%` }}
-              />
-            </div>
-
-            <div className="text-[11px] text-[#64748b] bg-[#0a0d14] p-2.5 rounded-lg border border-[#1e293b] flex items-center justify-center space-x-1.5">
-              <Shield className="w-3.5 h-3.5 text-[#00ff88]" />
-              <span>Đang đo dải tần & kích hoạt bộ lọc Chống Hú 4-Point Surgical Notch</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Slim Status Footer (24px) */}
-      <footer className="border-t border-[#1e293b] bg-[#0a0d14] px-3 py-1 flex items-center justify-between text-[10px] text-[#64748b] flex-shrink-0">
-        <div className="flex items-center space-x-2">
-          <span>Hoài Nguyễn Studio • Zalo: <strong className="text-[#00f0ff] font-mono">0965.043.000</strong></span>
-          <span className="text-[#00ff88]">✓ Chống Hú Active</span>
-        </div>
-        <div className="flex items-center space-x-3 text-[#94a3b8]">
-          <span>⚡ Độ trễ: ~2.4ms (Turbo 0-Lag)</span>
-          <span className="text-[#38bdf8]">64-Bit Host Audio</span>
+      {/* Footer */}
+      <footer className="border-t border-[#1e293b] bg-[#0a0d14] px-4 py-3 text-center text-xs text-[#64748b]">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>
+            Bản quyền © <strong className="text-[#f8fafc]">Hoài Nguyễn Studio</strong> • Zalo hỗ trợ: <strong className="text-[#00f0ff] font-mono">0965.043.000</strong>
+          </span>
+          <span className="text-[#94a3b8]">
+            Động cơ C++ JUCE 7.0.12 • Native VST3 Host Windows x64 • Ultra Low Latency
+          </span>
         </div>
       </footer>
     </div>

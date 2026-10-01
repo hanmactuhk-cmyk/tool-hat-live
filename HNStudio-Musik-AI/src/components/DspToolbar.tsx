@@ -1,12 +1,10 @@
 import React from 'react';
-import { Sliders, Shield, Zap, Wind, Sparkles, Disc, Waves, Repeat } from 'lucide-react';
+import { Sliders, Shield, Zap, Wind, Sparkles, Disc } from 'lucide-react';
 import {
   NoiseGateParams,
   CompressorParams,
   DeEsserParams,
-  ShortReverbParams,
-  LongReverbParams,
-  EchoDelayParams,
+  ReverbParams,
   LimiterParams,
 } from '../types/audio';
 
@@ -15,17 +13,13 @@ interface DspToolbarProps {
   compressor: CompressorParams;
   eqEnabled: boolean;
   deEsser: DeEsserParams;
-  shortReverb: ShortReverbParams;
-  longReverb: LongReverbParams;
-  echoDelay: EchoDelayParams;
+  reverb: ReverbParams;
   limiter: LimiterParams;
   onToggleGate: () => void;
   onToggleComp: () => void;
   onToggleEq: () => void;
   onToggleDeEsser: () => void;
-  onToggleShortReverb: () => void;
-  onToggleLongReverb: () => void;
-  onToggleEchoDelay: () => void;
+  onToggleReverb: () => void;
   onToggleLimiter: () => void;
   onOpenPopup: (id: string) => void;
 }
@@ -35,24 +29,20 @@ export const DspToolbar: React.FC<DspToolbarProps> = ({
   compressor,
   eqEnabled,
   deEsser,
-  shortReverb,
-  longReverb,
-  echoDelay,
+  reverb,
   limiter,
   onToggleGate,
   onToggleComp,
   onToggleEq,
   onToggleDeEsser,
-  onToggleShortReverb,
-  onToggleLongReverb,
-  onToggleEchoDelay,
+  onToggleReverb,
   onToggleLimiter,
   onOpenPopup,
 }) => {
   const dspModules = [
     {
       id: 'gate',
-      title: 'GATE',
+      title: 'NOISE GATE',
       enabled: noiseGate.enabled,
       icon: Wind,
       toggleAction: onToggleGate,
@@ -61,57 +51,39 @@ export const DspToolbar: React.FC<DspToolbarProps> = ({
     },
     {
       id: 'comp',
-      title: 'COMP',
+      title: 'COMPRESSOR',
       enabled: compressor.enabled,
       icon: Zap,
       toggleAction: onToggleComp,
       popupId: 'compressor',
-      details: `${compressor.threshold}dB | ${compressor.ratio}:1`,
+      details: `${compressor.threshold} dB | ${compressor.ratio}:1`,
     },
     {
       id: 'eq',
-      title: '13-EQ',
+      title: '13-BAND EQ',
       enabled: eqEnabled,
       icon: Sliders,
       toggleAction: onToggleEq,
       popupId: 'eq',
-      details: 'Parametric',
+      details: '20Hz - 20kHz Parametric',
     },
     {
       id: 'deesser',
-      title: 'DE-ESS',
+      title: 'DE-ESSER',
       enabled: deEsser.enabled,
       icon: Disc,
       toggleAction: onToggleDeEsser,
       popupId: 'deesser',
-      details: `${deEsser.frequency}Hz`,
+      details: `${deEsser.frequency} Hz`,
     },
     {
-      id: 'short_reverb',
-      title: 'VANG NGẮN',
-      enabled: shortReverb.enabled,
+      id: 'reverb',
+      title: 'REVERB',
+      enabled: reverb.enabled,
       icon: Sparkles,
-      toggleAction: onToggleShortReverb,
-      popupId: 'short_reverb',
-      details: `${shortReverb.decay.toFixed(1)}s (Plate)`,
-    },
-    {
-      id: 'long_reverb',
-      title: 'VANG DÀI',
-      enabled: longReverb.enabled,
-      icon: Waves,
-      toggleAction: onToggleLongReverb,
-      popupId: 'long_reverb',
-      details: `${longReverb.decay.toFixed(1)}s (Hall)`,
-    },
-    {
-      id: 'echo_delay',
-      title: 'ECHO / DELAY',
-      enabled: echoDelay.enabled,
-      icon: Repeat,
-      toggleAction: onToggleEchoDelay,
-      popupId: 'echo_delay',
-      details: `${echoDelay.time}ms | ${(echoDelay.feedback * 100).toFixed(0)}%`,
+      toggleAction: onToggleReverb,
+      popupId: 'reverb',
+      details: `${reverb.preset}`,
     },
     {
       id: 'limiter',
@@ -120,43 +92,43 @@ export const DspToolbar: React.FC<DspToolbarProps> = ({
       icon: Shield,
       toggleAction: onToggleLimiter,
       popupId: 'limiter',
-      details: `${limiter.threshold}dB`,
+      details: `${limiter.threshold} dB Ceiling`,
     },
   ];
 
   return (
-    <div className="bg-[#101622] rounded-xl border border-[#25334e] p-2 shadow-md flex-shrink-0">
-      <div className="flex items-center justify-between mb-1.5 px-0.5">
-        <span className="text-[11px] font-bold text-[#00f0ff] uppercase tracking-wider flex items-center space-x-1">
-          <Sliders className="w-3.5 h-3.5 text-[#00f0ff]" />
-          <span>MIC HARDWARE DSP (VANG NGẮN + VANG DÀI + ECHO DELAY + COMP)</span>
+    <div className="bg-[#101622] rounded-xl border border-[#25334e] p-3 shadow-lg">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold text-[#00f0ff] uppercase tracking-wider flex items-center space-x-1.5">
+          <Sliders className="w-4 h-4 text-[#00f0ff]" />
+          <span>MIC HARDWARE DSP INSERT CHAIN</span>
         </span>
-        <span className="text-[10px] text-[#64748b] hidden md:inline">
-          Routing: Gate → Anti-Feedback → Comp → EQ → DeEsser → Vang Ngắn/Dài → Echo
+        <span className="text-[11px] text-[#64748b]">
+          Routing: Gate → Comp → EQ → DeEsser → Reverb → VST3
         </span>
       </div>
 
-      <div className="grid grid-cols-4 lg:grid-cols-8 gap-1.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {dspModules.map((m) => {
           const Icon = m.icon;
           return (
             <div
               key={m.id}
-              className={`rounded-lg p-1.5 border transition-all duration-200 flex flex-col justify-between ${
+              className={`rounded-lg p-2.5 border transition-all duration-200 flex flex-col justify-between ${
                 m.enabled
-                  ? 'bg-[#161f30] border-[#00f0ff]/40 shadow-[0_0_8px_rgba(0,240,255,0.1)]'
+                  ? 'bg-[#161f30] border-[#00f0ff]/40 shadow-[0_0_12px_rgba(0,240,255,0.15)]'
                   : 'bg-[#0d121c] border-[#1e293b] opacity-75'
               }`}
             >
-              <div className="flex items-center justify-between mb-0.5">
-                <div className="flex items-center space-x-1 truncate">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center space-x-1.5">
                   <Icon
-                    className={`w-3 h-3 flex-shrink-0 ${
+                    className={`w-3.5 h-3.5 ${
                       m.enabled ? 'text-[#00f0ff]' : 'text-[#64748b]'
                     }`}
                   />
                   <span
-                    className={`text-[10px] font-bold truncate ${
+                    className={`text-xs font-bold ${
                       m.enabled ? 'text-[#f8fafc]' : 'text-[#64748b]'
                     }`}
                   >
@@ -165,28 +137,30 @@ export const DspToolbar: React.FC<DspToolbarProps> = ({
                 </div>
               </div>
 
-              <div className="text-[9px] text-[#94a3b8] truncate mb-0.5">
+              <div className="text-[10px] text-[#94a3b8] mb-2 truncate">
                 {m.details}
               </div>
 
-              <div className="flex items-center space-x-1 pt-0.5 border-t border-[#1e293b]/60">
+              <div className="flex items-center space-x-1.5 pt-1 border-t border-[#1e293b]/60">
+                {/* On / Off Button */}
                 <button
                   onClick={m.toggleAction}
-                  className={`flex-1 py-0.5 rounded text-[10px] font-bold tracking-wider transition-colors cursor-pointer ${
+                  className={`flex-1 py-1 rounded text-[11px] font-bold tracking-wider transition-colors cursor-pointer ${
                     m.enabled
-                      ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50'
-                      : 'bg-[#1e293b] text-[#64748b] border border-[#25334e]'
+                      ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                      : 'bg-[#1e293b] text-[#64748b] border border-[#25334e] hover:text-[#94a3b8]'
                   }`}
                 >
-                  {m.enabled ? '● BẬT' : '○ TẮT'}
+                  {m.enabled ? '● ON' : '○ OFF'}
                 </button>
 
+                {/* Edit Settings Button */}
                 <button
                   onClick={() => onOpenPopup(m.popupId)}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#1e2942] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#25334e] border border-[#25334e] transition-colors cursor-pointer"
+                  className="px-2 py-1 rounded text-[11px] font-medium bg-[#1e2942] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#25334e] border border-[#25334e] transition-colors cursor-pointer"
                   title="Chỉnh chi tiết"
                 >
-                  Sửa
+                  Chỉnh
                 </button>
               </div>
             </div>

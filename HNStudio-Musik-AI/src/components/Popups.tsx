@@ -6,9 +6,6 @@ import {
   CompressorParams,
   DeEsserParams,
   ReverbParams,
-  ShortReverbParams,
-  LongReverbParams,
-  EchoDelayParams,
   LimiterParams,
   AutoKeyParams,
   VstPluginSlot,
@@ -28,12 +25,6 @@ interface PopupsProps {
   onUpdateDeEsser: (p: Partial<DeEsserParams>) => void;
   reverb: ReverbParams;
   onUpdateReverb: (p: Partial<ReverbParams>) => void;
-  shortReverb: ShortReverbParams;
-  onUpdateShortReverb: (p: Partial<ShortReverbParams>) => void;
-  longReverb: LongReverbParams;
-  onUpdateLongReverb: (p: Partial<LongReverbParams>) => void;
-  echoDelay: EchoDelayParams;
-  onUpdateEchoDelay: (p: Partial<EchoDelayParams>) => void;
   limiter: LimiterParams;
   onUpdateLimiter: (p: Partial<LimiterParams>) => void;
   autoKey: AutoKeyParams;
@@ -59,12 +50,6 @@ export const Popups: React.FC<PopupsProps> = ({
   onUpdateDeEsser,
   reverb,
   onUpdateReverb,
-  shortReverb,
-  onUpdateShortReverb,
-  longReverb,
-  onUpdateLongReverb,
-  echoDelay,
-  onUpdateEchoDelay,
   limiter,
   onUpdateLimiter,
   autoKey,
@@ -515,176 +500,6 @@ export const Popups: React.FC<PopupsProps> = ({
                 className="flex-1 accent-[#a855f7]"
               />
               <span className="font-mono text-xs w-14 text-right text-[#a855f7] font-bold">{reverb.preDelay} ms</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 5.1 SHORT REVERB POPUP (VANG NGẮN)
-  if (activePopup === 'short_reverb') {
-    return renderModal(
-      'VANG NGẮN (SHORT REVERB - PLATE & ROOM)',
-      <Sparkles className="w-4 h-4 text-[#00f0ff]" />,
-      <div className="space-y-4">
-        <p className="text-xs text-[#94a3b8]">
-          Vang ngắn tạo độ đầm, làm dày giọng hát và giúp bắt mic tốt hơn mà không bị loãng tiếng hay nhòe lời ca.
-        </p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Thời gian vang (Decay Time)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="0.3"
-                max="1.8"
-                step="0.05"
-                value={shortReverb.decay}
-                onChange={(e) => onUpdateShortReverb({ decay: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#00f0ff]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#00f0ff] font-bold">{shortReverb.decay.toFixed(2)} s</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Âm lượng vang (Wet Level)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.02"
-                value={shortReverb.wet}
-                onChange={(e) => onUpdateShortReverb({ wet: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#00f0ff]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#00f0ff] font-bold">{(shortReverb.wet * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 5.2 LONG REVERB POPUP (VANG DÀI)
-  if (activePopup === 'long_reverb') {
-    return renderModal(
-      'VANG DÀI (LONG REVERB - CONCERT HALL & CATHEDRAL)',
-      <Sparkles className="w-4 h-4 text-[#d946ef]" />,
-      <div className="space-y-4">
-        <p className="text-xs text-[#94a3b8]">
-          Vang dài tạo đuôi ngân nga bay bổng, tạo cảm giác như bạn đang đứng hát giữa khán phòng nhà hát lớn.
-        </p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Thời gian đuôi vang (Decay Time)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="1.5"
-                max="6.0"
-                step="0.1"
-                value={longReverb.decay}
-                onChange={(e) => onUpdateLongReverb({ decay: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#d946ef]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#d946ef] font-bold">{longReverb.decay.toFixed(1)} s</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Âm lượng đuôi vang (Wet Level)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.02"
-                value={longReverb.wet}
-                onChange={(e) => onUpdateLongReverb({ wet: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#d946ef]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#d946ef] font-bold">{(longReverb.wet * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 5.3 ECHO / STEREO DELAY POPUP
-  if (activePopup === 'echo_delay') {
-    return renderModal(
-      'ECHO / DELAY (TIẾNG VỌNG STEREO TAPE DELAY)',
-      <Sparkles className="w-4 h-4 text-[#f59e0b]" />,
-      <div className="space-y-4">
-        <p className="text-xs text-[#94a3b8]">
-          Hiệu ứng Echo lặp lại tiếng hát theo nhịp, cực kỳ thích hợp cho nhạc Bolero, Nhạc Trẻ và Acoustic giúp giọng hát truyền cảm, nâng đỡ giọng yếu.
-        </p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Thời gian trễ (Delay Time)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="80"
-                max="600"
-                step="5"
-                value={echoDelay.time}
-                onChange={(e) => onUpdateEchoDelay({ time: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#f59e0b]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#f59e0b] font-bold">{echoDelay.time} ms</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Số lần lặp (Feedback)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="0"
-                max="0.8"
-                step="0.02"
-                value={echoDelay.feedback}
-                onChange={(e) => onUpdateEchoDelay({ feedback: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#f59e0b]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#f59e0b] font-bold">{(echoDelay.feedback * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Âm lượng Echo (Wet Level)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.02"
-                value={echoDelay.wet}
-                onChange={(e) => onUpdateEchoDelay({ wet: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#f59e0b]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#f59e0b] font-bold">{(echoDelay.wet * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Lọc ấm Analog (Hi-Cut Filter)</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="range"
-                min="1200"
-                max="8000"
-                step="100"
-                value={echoDelay.hiCut}
-                onChange={(e) => onUpdateEchoDelay({ hiCut: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#f59e0b]"
-              />
-              <span className="font-mono text-xs w-16 text-right text-[#f59e0b] font-bold">{echoDelay.hiCut} Hz</span>
             </div>
           </div>
         </div>

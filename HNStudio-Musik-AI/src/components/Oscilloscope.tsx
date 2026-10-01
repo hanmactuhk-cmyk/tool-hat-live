@@ -98,26 +98,26 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({ isLive }) => {
   }, [isLive]);
 
   return (
-    <div className="relative bg-[#101622] rounded-xl border border-[#25334e] p-2 shadow-md flex-1 min-w-[300px]">
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center space-x-1.5">
-          <Activity className="w-3.5 h-3.5 text-[#00f0ff]" />
-          <span className="text-[11px] font-bold text-[#00f0ff] uppercase tracking-wider">
+    <div className="relative bg-[#101622] rounded-xl border border-[#25334e] p-3 shadow-lg flex-1 min-w-[320px]">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center space-x-2">
+          <Activity className="w-4 h-4 text-[#00f0ff]" />
+          <span className="text-xs font-bold text-[#00f0ff] uppercase tracking-wider">
             REALTIME WAVEFORM ANALYZER
           </span>
         </div>
-        <div className="flex items-center space-x-2 text-[10px] text-[#94a3b8]">
+        <div className="flex items-center space-x-3 text-[11px] text-[#94a3b8]">
           <span className="flex items-center space-x-1">
-            <span className="w-2 h-0.5 rounded-sm bg-[#00f0ff] inline-block"></span>
+            <span className="w-2.5 h-1 rounded-sm bg-[#00f0ff] inline-block"></span>
             <span>Mic Bus</span>
           </span>
           <span className="flex items-center space-x-1">
-            <span className="w-2 h-0.5 rounded-sm bg-[#d946ef] inline-block"></span>
+            <span className="w-2.5 h-1 rounded-sm bg-[#d946ef] inline-block"></span>
             <span>Output Bus</span>
           </span>
-          <span className="text-[#64748b] border-l border-[#25334e] pl-1.5 flex items-center space-x-1">
-            <Radio className={`w-2.5 h-2.5 ${isLive ? 'text-[#00ff88]' : 'text-[#64748b]'}`} />
-            <span>{isLive ? '48kHz' : 'LIVE OFF'}</span>
+          <span className="text-[#64748b] border-l border-[#25334e] pl-2 flex items-center space-x-1">
+            <Radio className={`w-3 h-3 ${isLive ? 'text-[#00ff88]' : 'text-[#64748b]'}`} />
+            <span>{isLive ? 'Buffer: 512 / 48kHz' : 'Chưa bật LIVE'}</span>
           </span>
         </div>
       </div>
@@ -126,15 +126,15 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({ isLive }) => {
         <canvas
           ref={canvasRef}
           width={800}
-          height={120}
-          className="w-full h-[110px] block"
+          height={200}
+          className="w-full h-[180px] block"
         />
 
         {/* Center overlay indicator if silent */}
         {!isLive && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#161f30] text-[#94a3b8] border border-[#25334e]">
-              Bấm [● LIVE ON] để kích hoạt phân tích tín hiệu Micro
+            <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-[#161f30] text-[#94a3b8] border border-[#25334e]">
+              Bấm [● LIVE ON] để kích hoạt phân tích tín hiệu Mic & Waveform thật
             </span>
           </div>
         )}

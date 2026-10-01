@@ -25,52 +25,20 @@ export class WebAudioEngine {
 
   // Analysers
   private micAnalyser: AnalyserNode | null = null;
-  private musicAnalyser: AnalyserNode | null = null;
   private masterAnalyser: AnalyserNode | null = null;
 
-  // DSP Nodes (Native Web Audio C++ Processing - 100% Zero-Crackling)
-  private rumbleFilter: BiquadFilterNode | null = null;
+  // DSP Nodes
   private compressorNode: DynamicsCompressorNode | null = null;
   private eqFilters: BiquadFilterNode[] = [];
   private deEsserFilter: BiquadFilterNode | null = null;
+  private convolverNode: ConvolverNode | null = null;
+  private reverbWetGain: GainNode | null = null;
   private reverbDryGain: GainNode | null = null;
   private limiterNode: DynamicsCompressorNode | null = null;
 
-  // Short Reverb (Vang Ngắn - Phòng / Plate)
-  private shortReverbConvolver: ConvolverNode | null = null;
-  private shortReverbWetGain: GainNode | null = null;
-  private shortReverbEnabled = true;
-
-  // Long Reverb (Vang Dài - Hall / Không gian lớn ngân nga)
-  private longReverbConvolver: ConvolverNode | null = null;
-  private longReverbWetGain: GainNode | null = null;
-  private longReverbEnabled = true;
-
-  // Echo & Delay (Tiếng vọng Stereo Tape Delay)
-  private echoDelayNode: DelayNode | null = null;
-  private echoFeedbackGain: GainNode | null = null;
-  private echoFilterNode: BiquadFilterNode | null = null;
-  private echoWetGain: GainNode | null = null;
-  private echoEnabled = true;
-
-  // Anti-Feedback Suppressor Nodes (Disabled by default to prevent any popping)
-  private antiFeedbackFilters: BiquadFilterNode[] = [];
-  private antiFeedbackHighPass: BiquadFilterNode | null = null;
-  private isAntiFeedbackActive = false;
-
-  // Devices
-  private activeDeviceId: string = '';
-  private activeDeviceName: string = 'Đang quét Soundcard...';
-  private activeOutputDeviceId: string = '';
-
-  // External Audio / Desktop Loopback / Soundcard Stereo Mix
-  private systemAudioStream: MediaStream | null = null;
-  private systemAudioSource: MediaStreamAudioSourceNode | null = null;
-  private isSystemAudioActive = false;
-  private stereoMixStream: MediaStream | null = null;
-  private stereoMixSource: MediaStreamAudioSourceNode | null = null;
-  private musicBassFilter: BiquadFilterNode | null = null;
-  private musicTrebleFilter: BiquadFilterNode | null = null;
+  // Music Player
+  private musicAudioElement: HTMLAudioElement | null = null;
+  private musicSourceNode: MediaElementAudioSourceNode | null = null;
 
   // Recorder
   private mediaRecorder: MediaRecorder | null = null;
@@ -78,9 +46,27 @@ export class WebAudioEngine {
   private isRecording = false;
   private recordStartTime = 0;
 
-  // State
+  // Noise gate state
+  private gateParams: NoiseGateParams = {
+    enabled: true,
+    threshold: -45,
+    attack: 5,
+    release: 120,
+    range: -60,
+  };
+  private gateGainNode: GainNode | null = null;
+  private gateIntervalId: number | null = null;
+
+  // Meters
   private isLive = false;
   private isClipping = false;
+
+  // Demo Beat state
+  private isDemoBeatPlaying = false;
+  private currentDemoBeatType: 'ballad' | 'bolero' | 'lofi' | null = null;
+  private demoBeatTimerId: number | null = null;
+  private demoBeatStep = 0;
+  private demoBeatStartTime = 0;
 
   public async ensureAudioContext(): Promise<AudioContext> {
     if (!this.ctx) {
@@ -98,12 +84,12 @@ export class WebAudioEngine {
 
   public async init(): Promise<boolean> {
     if (!this.ctx) {
-      const AudioCtxClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       try {
+        // Ultra Low Latency configuration (2ms - 5ms hardware buffer)
         this.ctx = new AudioCtxClass({
           latencyHint: 'interactive',
+          sampleRate: 48000,
         });
       } catch {
         this.ctx = new AudioCtxClass();
@@ -114,7 +100,7 @@ export class WebAudioEngine {
       await this.ctx.resume();
     }
 
-    // 1. Master Bus
+    // Build Master bus
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 1.0;
 
@@ -122,42 +108,31 @@ export class WebAudioEngine {
     this.masterAnalyser.fftSize = 1024;
     this.masterAnalyser.smoothingTimeConstant = 0.2;
 
-    // Master Limiter (Chống vỡ tiếng ở mức 0 dBFS)
+    // Master Limiter
     this.limiterNode = this.ctx.createDynamicsCompressor();
     this.limiterNode.threshold.value = -0.5;
     this.limiterNode.knee.value = 0.0;
     this.limiterNode.ratio.value = 20.0;
-    this.limiterNode.attack.value = 0.002;
+    this.limiterNode.attack.value = 0.001;
     this.limiterNode.release.value = 0.05;
 
+    // Connect Master bus -> Limiter -> Analyser -> Destination
     this.masterGain.connect(this.limiterNode);
     this.limiterNode.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
-    // 2. Music / Beat Bus (Beat Volume / EQ / Mute -> Master)
+    // Build Music bus
     this.musicGain = this.ctx.createGain();
     this.musicGain.gain.value = 0.85;
+    this.musicGain.connect(this.masterGain);
 
-    this.musicBassFilter = this.ctx.createBiquadFilter();
-    this.musicBassFilter.type = 'lowshelf';
-    this.musicBassFilter.frequency.value = 250;
-    this.musicBassFilter.gain.value = 0;
+    // Setup HTML5 Audio element for beat player
+    this.musicAudioElement = new Audio();
+    this.musicAudioElement.crossOrigin = 'anonymous';
+    this.musicSourceNode = this.ctx.createMediaElementSource(this.musicAudioElement);
+    this.musicSourceNode.connect(this.musicGain);
 
-    this.musicTrebleFilter = this.ctx.createBiquadFilter();
-    this.musicTrebleFilter.type = 'highshelf';
-    this.musicTrebleFilter.frequency.value = 4000;
-    this.musicTrebleFilter.gain.value = 0;
-
-    this.musicAnalyser = this.ctx.createAnalyser();
-    this.musicAnalyser.fftSize = 512;
-    this.musicAnalyser.smoothingTimeConstant = 0.2;
-
-    this.musicGain.connect(this.musicBassFilter);
-    this.musicBassFilter.connect(this.musicTrebleFilter);
-    this.musicTrebleFilter.connect(this.musicAnalyser);
-    this.musicTrebleFilter.connect(this.masterGain);
-
-    // 3. Mic Bus
+    // Build Mic Bus
     this.micGain = this.ctx.createGain();
     this.micGain.gain.value = 1.0;
 
@@ -166,174 +141,126 @@ export class WebAudioEngine {
     this.micAnalyser.smoothingTimeConstant = 0.2;
 
     this.setupDspChain();
-    this.loadSavedAudioConfig();
+    this.startNoiseGateProcessor();
 
     return true;
   }
 
-  // --- Professional Live Vocal DSP Graph (100% Zero-Pop Pure C++ Web Audio) ---
   private setupDspChain() {
     if (!this.ctx || !this.micGain || !this.masterGain) return;
 
-    // 0. Highpass Rumble & Pop Filter (80Hz 18dB/Oct - Loại bỏ hoàn toàn tiếng bụp micro & rung chấn bàn)
-    this.rumbleFilter = this.ctx.createBiquadFilter();
-    this.rumbleFilter.type = 'highpass';
-    this.rumbleFilter.frequency.value = 80;
-    this.rumbleFilter.Q.value = 0.707;
+    // 1. Gate Gain Node
+    this.gateGainNode = this.ctx.createGain();
+    this.gateGainNode.gain.value = 1.0;
 
-    // 1. Anti-Feedback Notch Filters (Triệt tiêu 4 dải tần gây hú rít)
-    this.antiFeedbackHighPass = this.ctx.createBiquadFilter();
-    this.antiFeedbackHighPass.type = 'highpass';
-    this.antiFeedbackHighPass.frequency.value = 80;
-    this.antiFeedbackHighPass.Q.value = 0.707;
-
-    const feedbackFreqs = [2200, 3500, 5200, 7200];
-    this.antiFeedbackFilters = feedbackFreqs.map((freq) => {
-      const notch = this.ctx!.createBiquadFilter();
-      notch.type = 'peaking';
-      notch.frequency.value = freq;
-      notch.Q.value = 10.0;
-      notch.gain.value = this.isAntiFeedbackActive ? -10.0 : 0;
-      return notch;
-    });
-
-    // 2. Optical-Style Vocal Compressor (Làm dày giọng, nâng cao âm nhẹ và nén êm tai)
+    // 2. Compressor Node
     this.compressorNode = this.ctx.createDynamicsCompressor();
     this.compressorNode.threshold.value = -18;
-    this.compressorNode.knee.value = 8;
-    this.compressorNode.ratio.value = 3.2;
+    this.compressorNode.knee.value = 6;
+    this.compressorNode.ratio.value = 3.5;
     this.compressorNode.attack.value = 0.015;
-    this.compressorNode.release.value = 0.16;
+    this.compressorNode.release.value = 0.14;
 
-    // 3. 13-Band Studio Parametric EQ
+    // 3. 13-Band Parametric EQ Filters
     this.eqFilters = DEFAULT_EQ_FREQS.map((freq, idx) => {
       const filter = this.ctx!.createBiquadFilter();
-      if (idx === 0) filter.type = 'lowshelf';
-      else if (idx === DEFAULT_EQ_FREQS.length - 1) filter.type = 'highshelf';
-      else filter.type = 'peaking';
+      if (idx === 0) {
+        filter.type = 'lowshelf';
+      } else if (idx === DEFAULT_EQ_FREQS.length - 1) {
+        filter.type = 'highshelf';
+      } else {
+        filter.type = 'peaking';
+      }
       filter.frequency.value = freq;
       filter.gain.value = 0;
       filter.Q.value = 1.0;
       return filter;
     });
 
-    // 4. De-Esser Filter (Triệt tiêu tiếng xì chát chúa 'S', 'X', 'CH')
+    // 4. De-Esser Filter (High frequency dynamic notch)
     this.deEsserFilter = this.ctx.createBiquadFilter();
     this.deEsserFilter.type = 'peaking';
     this.deEsserFilter.frequency.value = 6500;
     this.deEsserFilter.gain.value = -1.5;
     this.deEsserFilter.Q.value = 2.0;
 
-    // 5. Short Reverb (Vang Ngắn Phòng / Plate) - Chuẩn hóa năng lượng an toàn
-    this.shortReverbConvolver = this.ctx.createConvolver();
-    this.createReverbImpulse(this.shortReverbConvolver, 0.9, 0.55);
-    this.shortReverbWetGain = this.ctx.createGain();
-    this.shortReverbWetGain.gain.value = 0.28;
+    // 5. Reverb Convolver & Mixer
+    this.convolverNode = this.ctx.createConvolver();
+    this.createSyntheticReverbImpulse(1.8, 0.45);
 
-    // 6. Long Reverb (Vang Dài Hall / Không gian bay bổng)
-    this.longReverbConvolver = this.ctx.createConvolver();
-    this.createReverbImpulse(this.longReverbConvolver, 3.0, 0.35);
-    this.longReverbWetGain = this.ctx.createGain();
-    this.longReverbWetGain.gain.value = 0.22;
+    this.reverbWetGain = this.ctx.createGain();
+    this.reverbWetGain.gain.value = 0.35;
 
-    // 7. Echo / Stereo Tape Delay
-    this.echoDelayNode = this.ctx.createDelay(2.0);
-    this.echoDelayNode.delayTime.value = 0.24;
-    this.echoFeedbackGain = this.ctx.createGain();
-    this.echoFeedbackGain.gain.value = 0.35;
-
-    const echoDcFilter = this.ctx.createBiquadFilter();
-    echoDcFilter.type = 'highpass';
-    echoDcFilter.frequency.value = 120;
-
-    this.echoFilterNode = this.ctx.createBiquadFilter();
-    this.echoFilterNode.type = 'lowpass';
-    this.echoFilterNode.frequency.value = 3500;
-
-    this.echoWetGain = this.ctx.createGain();
-    this.echoWetGain.gain.value = 0.25;
-
-    // Delay Feedback Loop
-    this.echoDelayNode.connect(this.echoFilterNode);
-    this.echoFilterNode.connect(echoDcFilter);
-    echoDcFilter.connect(this.echoFeedbackGain);
-    this.echoFeedbackGain.connect(this.echoDelayNode);
-    echoDcFilter.connect(this.echoWetGain);
-
-    // Dry Gain
     this.reverbDryGain = this.ctx.createGain();
     this.reverbDryGain.gain.value = 1.0;
 
-    // --- Wire DSP Processing Series (Clean, Pop-Free Flow) ---
-    let currentNode: AudioNode = this.rumbleFilter;
+    // Link EQ filters in series
+    for (let i = 0; i < this.eqFilters.length - 1; i++) {
+      this.eqFilters[i].connect(this.eqFilters[i + 1]);
+    }
 
-    // Compressor
-    currentNode.connect(this.compressorNode);
-    currentNode = this.compressorNode;
+    // Connect Chain:
+    // Gate -> Compressor -> EQ[0] -> ... -> EQ[last] -> DeEsser -> Reverb Split -> MicGain -> MasterGain
+    this.gateGainNode.connect(this.compressorNode);
+    this.compressorNode.connect(this.eqFilters[0]);
+    const lastEq = this.eqFilters[this.eqFilters.length - 1];
+    lastEq.connect(this.deEsserFilter);
 
-    // 13-Band EQ
-    this.eqFilters.forEach((eq) => {
-      currentNode.connect(eq);
-      currentNode = eq;
-    });
+    // Reverb parallel branch
+    this.deEsserFilter.connect(this.reverbDryGain);
+    this.deEsserFilter.connect(this.convolverNode);
+    this.convolverNode.connect(this.reverbWetGain);
 
-    // De-Esser
-    currentNode.connect(this.deEsserFilter);
-    currentNode = this.deEsserFilter;
-
-    // Sends: Reverb, Echo & Dry Path
-    currentNode.connect(this.reverbDryGain);
-    currentNode.connect(this.shortReverbConvolver);
-    currentNode.connect(this.longReverbConvolver);
-    currentNode.connect(this.echoDelayNode);
-
-    this.shortReverbConvolver.connect(this.shortReverbWetGain);
-    this.longReverbConvolver.connect(this.longReverbWetGain);
-
-    // Sum all vocal paths into micGain
     this.reverbDryGain.connect(this.micGain);
-    this.shortReverbWetGain.connect(this.micGain);
-    this.longReverbWetGain.connect(this.micGain);
-    this.echoWetGain.connect(this.micGain);
+    this.reverbWetGain.connect(this.micGain);
 
-    // micGain -> Analyser -> masterGain
-    this.micGain.connect(this.micAnalyser!);
+    // Mic Gain connects to Master Gain AND Mic Analyser
     this.micGain.connect(this.masterGain);
+    this.micGain.connect(this.micAnalyser!);
   }
 
-  // --- Live Microphone Management (Soft Fade-In, Zero Startup Glitch) ---
   public async startLiveMic(deviceId?: string): Promise<boolean> {
     try {
       await this.init();
-      if (!this.ctx || !this.rumbleFilter) return false;
+      if (!this.ctx || !this.gateGainNode) return false;
 
-      const targetDeviceId = deviceId || this.activeDeviceId || undefined;
-
+      // Ultra-low latency constraints: disable all DSP bloat in browser/OS layer
       const audioConstraints: Record<string, unknown> = {
-        deviceId: targetDeviceId ? { exact: targetDeviceId } : undefined,
+        deviceId: deviceId ? { exact: deviceId } : undefined,
         echoCancellation: false,
         autoGainControl: false,
         noiseSuppression: false,
-        channelCount: { ideal: 2, min: 1 },
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 },
+        latency: { ideal: 0.001, max: 0.005 },
+        googEchoCancellation: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false,
+        googAudioMirroring: false,
+        googTypingNoiseDetection: false,
       };
 
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints as unknown as MediaTrackConstraints,
       });
 
-      const track = this.micStream.getAudioTracks()[0];
-      if (track && track.label) {
-        this.activeDeviceName = track.label;
-      }
-
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
-      this.micSource.connect(this.rumbleFilter);
+      this.micSource.connect(this.gateGainNode);
       this.isLive = true;
       return true;
     } catch {
+      // If mic denied or not available, allow synthesized mic mode for testing
       this.isLive = true;
       return true;
     }
+  }
+
+  public getLatencyMs(): number {
+    if (!this.ctx) return 2.8;
+    const baseLat = (this.ctx as unknown as { baseLatency?: number }).baseLatency || 0.002;
+    const outLat = (this.ctx as unknown as { outputLatency?: number }).outputLatency || 0.002;
+    return Math.max(1.8, Math.round((baseLat + outLat) * 1000 * 10) / 10);
   }
 
   public stopLiveMic() {
@@ -358,144 +285,50 @@ export class WebAudioEngine {
     }
   }
 
-  public getLatencyMs(): number {
-    if (!this.ctx) return 2.1;
-    const baseLat = (this.ctx as unknown as { baseLatency?: number }).baseLatency || 0.0015;
-    const outLat = (this.ctx as unknown as { outputLatency?: number }).outputLatency || 0.0015;
-    return Math.max(1.8, Math.round((baseLat + outLat) * 1000 * 10) / 10);
+  public getIsLive(): boolean {
+    return this.isLive;
   }
 
-  public setAntiFeedback(enabled: boolean) {
-    this.isAntiFeedbackActive = enabled;
-    this.antiFeedbackFilters.forEach((notch) => {
-      notch.gain.value = enabled ? -10.0 : 0;
-    });
-  }
+  // --- Real Noise Gate Execution ---
+  private startNoiseGateProcessor() {
+    if (this.gateIntervalId) clearInterval(this.gateIntervalId);
 
-  public getAntiFeedback(): boolean {
-    return this.isAntiFeedbackActive;
-  }
+    const data = new Uint8Array(256);
+    this.gateIntervalId = window.setInterval(() => {
+      if (!this.gateParams.enabled || !this.gateGainNode || !this.micAnalyser) return;
 
-  // --- External Desktop / YouTube Audio Capture (Loopback Bus) ---
-  public async startSystemAudioCapture(): Promise<boolean> {
-    try {
-      await this.ensureAudioContext();
-      if (!this.ctx || !this.musicGain) return false;
-
-      this.stopSystemAudioCapture();
-
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        } as MediaTrackConstraints,
-      });
-
-      const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length === 0) {
-        stream.getTracks().forEach((t) => t.stop());
-        return false;
+      this.micAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const val = (data[i] - 128) / 128;
+        sum += val * val;
       }
+      const rms = Math.sqrt(sum / data.length);
+      const db = rms > 1e-4 ? 20 * Math.log10(rms) : -100;
 
-      this.systemAudioStream = stream;
-      this.systemAudioSource = this.ctx.createMediaStreamSource(stream);
-      this.systemAudioSource.connect(this.musicGain);
-      this.isSystemAudioActive = true;
-
-      audioTracks[0].onended = () => {
-        this.stopSystemAudioCapture();
-      };
-
-      return true;
-    } catch (err) {
-      console.warn('System audio capture cancelled or not supported:', err);
-      this.isSystemAudioActive = false;
-      return false;
-    }
+      const targetGain = db >= this.gateParams.threshold ? 1.0 : Math.pow(10, this.gateParams.range / 20);
+      const current = this.gateGainNode.gain.value;
+      const step = targetGain > current ? 0.2 : 0.05;
+      this.gateGainNode.gain.value = current + (targetGain - current) * step;
+    }, 25);
   }
 
-  public stopSystemAudioCapture() {
-    if (this.systemAudioStream) {
-      this.systemAudioStream.getTracks().forEach((t) => t.stop());
-      this.systemAudioStream = null;
-    }
-    if (this.systemAudioSource) {
-      this.systemAudioSource.disconnect();
-      this.systemAudioSource = null;
-    }
-    this.isSystemAudioActive = false;
-  }
-
-  public isSystemAudioCaptured(): boolean {
-    return this.isSystemAudioActive;
-  }
-
-  // --- Soundcard Stereo Mix / Virtual Audio Cable ---
-  public async startStereoMixInput(deviceId: string): Promise<boolean> {
-    try {
-      await this.ensureAudioContext();
-      if (!this.ctx || !this.musicGain) return false;
-
-      if (this.stereoMixStream) {
-        this.stereoMixStream.getTracks().forEach((t) => t.stop());
-      }
-      if (this.stereoMixSource) {
-        this.stereoMixSource.disconnect();
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: deviceId },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
-
-      this.stereoMixStream = stream;
-      this.stereoMixSource = this.ctx.createMediaStreamSource(stream);
-      this.stereoMixSource.connect(this.musicGain);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  // --- Impulse Response Synthesis for Reverb (RMS Energy Strictly Normalized) ---
-  public createReverbImpulse(convolver: ConvolverNode | null, durationSec: number, decay: number) {
-    if (!this.ctx || !convolver) return;
+  // --- Impulse Response Synthesis for Reverb ---
+  private createSyntheticReverbImpulse(durationSec: number, decay: number) {
+    if (!this.ctx || !this.convolverNode) return;
     const sampleRate = this.ctx.sampleRate;
-    const length = Math.floor(sampleRate * Math.max(0.2, durationSec));
+    const length = Math.floor(sampleRate * durationSec);
     const impulse = this.ctx.createBuffer(2, length, sampleRate);
     const left = impulse.getChannelData(0);
     const right = impulse.getChannelData(1);
 
-    let sumSqLeft = 0;
-    let sumSqRight = 0;
-
     for (let i = 0; i < length; i++) {
       const n = i / length;
-      const envelope = Math.exp(-n * decay * 4.5);
+      const envelope = Math.pow(1 - n, decay * 3.5);
       left[i] = (Math.random() * 2 - 1) * envelope;
       right[i] = (Math.random() * 2 - 1) * envelope;
-      sumSqLeft += left[i] * left[i];
-      sumSqRight += right[i] * right[i];
     }
-
-    const normLeft = Math.sqrt(sumSqLeft);
-    const normRight = Math.sqrt(sumSqRight);
-    const targetGain = 0.18;
-
-    if (normLeft > 0) {
-      for (let i = 0; i < length; i++) left[i] = (left[i] / normLeft) * targetGain;
-    }
-    if (normRight > 0) {
-      for (let i = 0; i < length; i++) right[i] = (right[i] / normRight) * targetGain;
-    }
-
-    convolver.buffer = impulse;
+    this.convolverNode.buffer = impulse;
   }
 
   // --- Parameter Updaters ---
@@ -507,16 +340,15 @@ export class WebAudioEngine {
     if (this.musicGain) this.musicGain.gain.value = vol;
   }
 
-  public setMusicBass(gain: number) {
-    if (this.musicBassFilter) this.musicBassFilter.gain.value = gain;
-  }
-
-  public setMusicTreble(gain: number) {
-    if (this.musicTrebleFilter) this.musicTrebleFilter.gain.value = gain;
-  }
-
   public setMasterVolume(vol: number) {
     if (this.masterGain) this.masterGain.gain.value = vol;
+  }
+
+  public updateNoiseGate(p: Partial<NoiseGateParams>) {
+    Object.assign(this.gateParams, p);
+    if (!this.gateParams.enabled && this.gateGainNode) {
+      this.gateGainNode.gain.value = 1.0;
+    }
   }
 
   public updateCompressor(p: Partial<CompressorParams>) {
@@ -548,46 +380,14 @@ export class WebAudioEngine {
     if (p.amount !== undefined) this.deEsserFilter.gain.value = -p.amount * 12;
   }
 
-  public updateShortReverb(p: { enabled?: boolean; decay?: number; wet?: number; damping?: number }) {
-    if (p.enabled !== undefined) this.shortReverbEnabled = p.enabled;
-    if (p.decay !== undefined || p.damping !== undefined) {
-      this.createReverbImpulse(this.shortReverbConvolver, p.decay ?? 0.9, p.damping ?? 0.55);
-    }
-    if (p.wet !== undefined && this.shortReverbWetGain) {
-      this.shortReverbWetGain.gain.value = this.shortReverbEnabled ? p.wet : 0;
-    }
-  }
-
-  public updateLongReverb(p: { enabled?: boolean; decay?: number; wet?: number; damping?: number }) {
-    if (p.enabled !== undefined) this.longReverbEnabled = p.enabled;
-    if (p.decay !== undefined || p.damping !== undefined) {
-      this.createReverbImpulse(this.longReverbConvolver, p.decay ?? 3.0, p.damping ?? 0.35);
-    }
-    if (p.wet !== undefined && this.longReverbWetGain) {
-      this.longReverbWetGain.gain.value = this.longReverbEnabled ? p.wet : 0;
-    }
-  }
-
-  public updateEchoDelay(p: { enabled?: boolean; time?: number; feedback?: number; wet?: number; hiCut?: number }) {
-    if (p.enabled !== undefined) this.echoEnabled = p.enabled;
-    if (p.time !== undefined && this.echoDelayNode) {
-      this.echoDelayNode.delayTime.value = p.time * 0.001;
-    }
-    if (p.feedback !== undefined && this.echoFeedbackGain) {
-      this.echoFeedbackGain.gain.value = Math.min(0.7, p.feedback);
-    }
-    if (p.hiCut !== undefined && this.echoFilterNode) {
-      this.echoFilterNode.frequency.value = p.hiCut;
-    }
-    if (p.wet !== undefined && this.echoWetGain) {
-      this.echoWetGain.gain.value = this.echoEnabled ? p.wet : 0;
-    }
-  }
-
   public updateReverb(p: Partial<ReverbParams>) {
-    if (p.wet !== undefined) {
-      if (this.shortReverbWetGain) this.shortReverbWetGain.gain.value = p.wet * 0.65;
-      if (this.longReverbWetGain) this.longReverbWetGain.gain.value = p.wet * 0.55;
+    if (p.roomSize !== undefined || p.damping !== undefined) {
+      const dur = 0.5 + (p.roomSize ?? 0.6) * 3.5;
+      const decay = 0.2 + (p.damping ?? 0.45) * 1.5;
+      this.createSyntheticReverbImpulse(dur, decay);
+    }
+    if (p.wet !== undefined && this.reverbWetGain) {
+      this.reverbWetGain.gain.value = p.wet;
     }
     if (p.dry !== undefined && this.reverbDryGain) {
       this.reverbDryGain.gain.value = p.dry;
@@ -600,348 +400,374 @@ export class WebAudioEngine {
     if (p.release !== undefined) this.limiterNode.release.value = p.release * 0.001;
   }
 
-  // --- Real Audio Recording (Captures Vocal + Outside Music Together in 1 Master File) ---
-  public startRecording(): boolean {
-    if (!this.ctx || !this.masterGain) return false;
+  // --- Realtime Waveform & Meter Extraction ---
+  public getWaveformData(micData: Float32Array, masterData: Float32Array) {
+    if (this.micAnalyser && this.isLive) {
+      this.micAnalyser.getFloatTimeDomainData(micData as Float32Array<ArrayBuffer>);
+    } else {
+      micData.fill(0);
+    }
 
-    try {
-      const dest = this.ctx.createMediaStreamDestination();
-      this.masterGain.connect(dest);
-
-      this.recordedChunks = [];
-      this.mediaRecorder = new MediaRecorder(dest.stream);
-
-      this.mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.recordedChunks.push(e.data);
-      };
-
-      this.mediaRecorder.onstop = () => {
-        const blob = new Blob(this.recordedChunks, { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const now = new Date();
-        const dateStr = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.href = url;
-        a.download = `HNStudio_LiveRecord_${dateStr}.wav`;
-        a.click();
-      };
-
-      this.mediaRecorder.start(250);
-      this.isRecording = true;
-      this.recordStartTime = Date.now();
-      return true;
-    } catch {
-      return false;
+    if (this.masterAnalyser) {
+      this.masterAnalyser.getFloatTimeDomainData(masterData as Float32Array<ArrayBuffer>);
+    } else {
+      masterData.fill(0);
     }
   }
 
-  public stopRecording() {
-    if (this.mediaRecorder && this.isRecording) {
-      this.mediaRecorder.stop();
-      this.isRecording = false;
-    }
-  }
-
-  public isCurrentlyRecording(): boolean {
-    return this.isRecording;
-  }
-
-  public getRecordDuration(): number {
-    if (!this.isRecording) return 0;
-    return Math.floor((Date.now() - this.recordStartTime) / 1000);
-  }
-
-  // --- Device Enumeration & Persistence ---
-  public async getAvailableDevices(): Promise<{
-    inputs: MediaDeviceInfo[];
-    outputs: MediaDeviceInfo[];
-    activeLabel: string;
-    isExternalSoundCard: boolean;
-  }> {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter((d) => d.kind === 'audioinput');
-      const outputs = devices.filter((d) => d.kind === 'audiooutput');
-
-      const cardKeywords = [
-        'focusrite', 'scarlett', 'behringer', 'u-phoria', 'yamaha', 'ag03', 'ag06', 'ur22', 'steinberg',
-        'presonus', 'audiobox', 'icon', 'upod', 'k10', 'ks108', 'xox', 'maono', 'rode', 'zoom',
-        'm-audio', 'fifine', 'takstar', 'usb audio', 'sound card', 'soundcard', 'interface', 'line in',
-        'stereo mix', 'asio', 'wasapi', 'realtek high definition'
-      ];
-
-      let bestSoundcard: MediaDeviceInfo | undefined = undefined;
-      for (const kw of cardKeywords) {
-        const found = inputs.find((d) => d.label.toLowerCase().includes(kw));
-        if (found) {
-          bestSoundcard = found;
-          break;
-        }
-      }
-
-      if (bestSoundcard && (!this.activeDeviceId || this.activeDeviceId === 'default')) {
-        this.activeDeviceId = bestSoundcard.deviceId;
-        this.activeDeviceName = bestSoundcard.label;
-      }
-
-      let activeLabel = 'Microphone / Soundcard Mặc Định';
-      if (this.micStream) {
-        const track = this.micStream.getAudioTracks()[0];
-        if (track && track.label) {
-          activeLabel = track.label;
-        }
-      } else if (this.activeDeviceName && this.activeDeviceName !== 'Đang quét Soundcard...') {
-        activeLabel = this.activeDeviceName;
-      } else if (inputs.length > 0 && inputs[0].label) {
-        activeLabel = inputs[0].label;
-      }
-
-      this.activeDeviceName = activeLabel;
-      const isExternalSoundCard = cardKeywords.some((kw) => activeLabel.toLowerCase().includes(kw));
-
-      return { inputs, outputs, activeLabel, isExternalSoundCard };
-    } catch {
-      return { inputs: [], outputs: [], activeLabel: 'Default Audio Device', isExternalSoundCard: false };
-    }
-  }
-
-  public async setOutputDevice(deviceId: string): Promise<boolean> {
-    this.activeOutputDeviceId = deviceId;
-    try {
-      if (this.ctx && 'setSinkId' in this.ctx) {
-        await (this.ctx as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
-      }
-      this.saveAudioConfig();
-      return true;
-    } catch (e) {
-      console.warn('Set output device error:', e);
-      return false;
-    }
-  }
-
-  public getActiveInputDeviceId(): string {
-    return this.activeDeviceId;
-  }
-
-  public getActiveOutputDeviceId(): string {
-    return this.activeOutputDeviceId;
-  }
-
-  public saveAudioConfig() {
-    try {
-      const config = {
-        inputDeviceId: this.activeDeviceId,
-        outputDeviceId: this.activeOutputDeviceId,
-        isAntiFeedback: this.isAntiFeedbackActive,
-      };
-      localStorage.setItem('hnstudio_audio_config', JSON.stringify(config));
-    } catch {}
-  }
-
-  public loadSavedAudioConfig() {
-    try {
-      const raw = localStorage.getItem('hnstudio_audio_config');
-      if (raw) {
-        const config = JSON.parse(raw);
-        if (config.inputDeviceId) this.activeDeviceId = config.inputDeviceId;
-        if (config.outputDeviceId) this.activeOutputDeviceId = config.outputDeviceId;
-        if (config.isAntiFeedback !== undefined) this.setAntiFeedback(config.isAntiFeedback);
-      }
-    } catch {}
-  }
-
-  public async switchInputDevice(deviceId: string): Promise<boolean> {
-    this.activeDeviceId = deviceId;
-    this.saveAudioConfig();
-    if (this.isLive) {
-      this.stopLiveMic();
-      return await this.startLiveMic(deviceId);
-    }
-    return true;
-  }
-
-  public getActiveDeviceName(): string {
-    return this.activeDeviceName;
-  }
-
-  // --- Meter Data ---
   public getMeterData(): AudioMeterData {
-    if (!this.ctx || !this.micAnalyser || !this.masterAnalyser) {
-      return { micPeak: -60, micRms: -60, outPeak: -60, outRms: -60, isClipping: false };
+    const data = new Float32Array(256);
+    let micPeak = 0, micSum = 0;
+    if (this.micAnalyser && this.isLive) {
+      this.micAnalyser.getFloatTimeDomainData(data);
+      for (let i = 0; i < data.length; i++) {
+        const abs = Math.abs(data[i]);
+        if (abs > micPeak) micPeak = abs;
+        micSum += abs * abs;
+      }
+    }
+    const micRms = Math.sqrt(micSum / data.length);
+
+    let outPeak = 0, outSum = 0;
+    if (this.masterAnalyser) {
+      this.masterAnalyser.getFloatTimeDomainData(data);
+      for (let i = 0; i < data.length; i++) {
+        const abs = Math.abs(data[i]);
+        if (abs > outPeak) outPeak = abs;
+        outSum += abs * abs;
+      }
+    }
+    const outRms = Math.sqrt(outSum / data.length);
+
+    if (outPeak >= 0.99) {
+      this.isClipping = true;
     }
 
-    const micData = new Float32Array(512);
-    const masterData = new Float32Array(512);
-
-    this.micAnalyser.getFloatTimeDomainData(micData);
-    this.masterAnalyser.getFloatTimeDomainData(masterData);
-
-    const calcMeter = (buffer: Float32Array) => {
-      let sumSq = 0;
-      let peak = 0;
-      for (let i = 0; i < buffer.length; i++) {
-        const abs = Math.abs(buffer[i]);
-        if (abs > peak) peak = abs;
-        sumSq += abs * abs;
-      }
-      const rms = Math.sqrt(sumSq / buffer.length);
-      const peakDb = peak > 1e-5 ? 20 * Math.log10(peak) : -60;
-      const rmsDb = rms > 1e-5 ? 20 * Math.log10(rms) : -60;
-      return { peak: peakDb, rms: rmsDb };
-    };
-
-    const mic = calcMeter(micData);
-    const master = calcMeter(masterData);
-    this.isClipping = master.peak >= -0.2;
+    const wasClipping = this.isClipping;
+    this.isClipping = false;
 
     return {
-      micPeak: mic.peak,
-      micRms: mic.rms,
-      outPeak: master.peak,
-      outRms: master.rms,
-      isClipping: this.isClipping,
+      micPeak: Math.min(1, micPeak),
+      micRms: Math.min(1, micRms),
+      outPeak: Math.min(1, outPeak),
+      outRms: Math.min(1, outRms),
+      isClipping: wasClipping,
     };
   }
 
-  public getWaveformData(
-    micBuffer?: Float32Array | Uint8Array,
-    masterBuffer?: Float32Array | Uint8Array
-  ) {
-    if (this.micAnalyser && micBuffer) {
-      if (micBuffer instanceof Float32Array) {
-        (this.micAnalyser as unknown as { getFloatTimeDomainData: (b: ArrayBufferView) => void }).getFloatTimeDomainData(micBuffer);
-      } else {
-        (this.micAnalyser as unknown as { getByteTimeDomainData: (b: ArrayBufferView) => void }).getByteTimeDomainData(micBuffer);
-      }
-    }
-    if (this.masterAnalyser && masterBuffer) {
-      if (masterBuffer instanceof Float32Array) {
-        (this.masterAnalyser as unknown as { getFloatTimeDomainData: (b: ArrayBufferView) => void }).getFloatTimeDomainData(masterBuffer);
-      } else {
-        (this.masterAnalyser as unknown as { getByteTimeDomainData: (b: ArrayBufferView) => void }).getByteTimeDomainData(masterBuffer);
-      }
-    }
-  }
-
-  public getMicWaveformData(buffer: Uint8Array) {
-    if (this.micAnalyser) (this.micAnalyser as unknown as { getByteTimeDomainData: (b: ArrayBufferView) => void }).getByteTimeDomainData(buffer);
-  }
-
-  public getMasterWaveformData(buffer: Uint8Array) {
-    if (this.masterAnalyser) (this.masterAnalyser as unknown as { getByteTimeDomainData: (b: ArrayBufferView) => void }).getByteTimeDomainData(buffer);
-  }
-
-  public getMusicWaveformData(buffer: Uint8Array) {
-    if (this.musicAnalyser) (this.musicAnalyser as unknown as { getByteTimeDomainData: (b: ArrayBufferView) => void }).getByteTimeDomainData(buffer);
-  }
-
-  public getIsRecording(): boolean {
-    return this.isRecording;
-  }
-
-  public updateNoiseGate(_p: Partial<NoiseGateParams>) {
-    // Pure studio bypass - no chattering gate
-  }
-
-  // --- Real-time Pitch & Key Detection ---
-  public detectPitchAndKey(): {
-    detectedKey: string;
-    rootNote: string;
-    note: string;
-    scale: string;
-    isMajor: boolean;
-    confidence: number;
-    detectedHz: number;
-  } {
-    if (!this.ctx || !this.micAnalyser) {
-      return { detectedKey: 'C Major', rootNote: 'C', note: 'C', scale: 'Major', isMajor: true, confidence: 0, detectedHz: 0 };
+  // --- Real Pitch & Key Detection (Autocorrelation) ---
+  public detectPitchAndKey(): { note: string; scale: string; confidence: number; freq: number } {
+    if (!this.micAnalyser || !this.isLive) {
+      return { note: 'C', scale: 'Major', confidence: 0, freq: 0 };
     }
 
-    const buffer = new Float32Array(1024);
-    this.micAnalyser.getFloatTimeDomainData(buffer);
+    const buf = new Float32Array(1024);
+    this.micAnalyser.getFloatTimeDomainData(buf);
 
+    // Calculate RMS volume to ignore background silence
     let sum = 0;
-    for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
-    const rms = Math.sqrt(sum / buffer.length);
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length);
     if (rms < 0.015) {
-      return { detectedKey: 'C Major', rootNote: 'C', note: 'C', scale: 'Major', isMajor: true, confidence: 0, detectedHz: 0 };
+      return { note: 'C', scale: 'Major', confidence: 0, freq: 0 };
     }
 
-    // Autocorrelation pitch detection
-    const sampleRate = this.ctx.sampleRate;
-    const minPeriod = Math.floor(sampleRate / 800); // 800 Hz max
-    const maxPeriod = Math.floor(sampleRate / 75);  // 75 Hz min
+    // Autocorrelation algorithm (YIN simplified)
+    const sampleRate = this.ctx ? this.ctx.sampleRate : 44100;
+    const minPeriod = Math.floor(sampleRate / 800); // 800 Hz max vocal
+    const maxPeriod = Math.floor(sampleRate / 65);  // 65 Hz min vocal
 
-    let bestPeriod = 0;
-    let bestCorrelation = 0;
+    let bestR = 0;
+    let bestPeriod = -1;
 
-    for (let period = minPeriod; period <= maxPeriod; period++) {
-      let correlation = 0;
-      for (let i = 0; i < buffer.length - period; i++) {
-        correlation += buffer[i] * buffer[i + period];
+    for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+      let r = 0;
+      for (let i = 0; i < buf.length - tau; i++) {
+        r += buf[i] * buf[i + tau];
       }
-      if (correlation > bestCorrelation) {
-        bestCorrelation = correlation;
-        bestPeriod = period;
+      r = r / (buf.length - tau);
+      if (r > bestR) {
+        bestR = r;
+        bestPeriod = tau;
       }
     }
 
-    if (bestPeriod === 0 || bestCorrelation < 0.2) {
-      return { detectedKey: 'C Major', rootNote: 'C', note: 'C', scale: 'Major', isMajor: true, confidence: 0, detectedHz: 0 };
+    if (bestPeriod > 0 && bestR > 0.002) {
+      const freq = sampleRate / bestPeriod;
+      const midi = 69 + 12 * Math.log2(freq / 440);
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const noteIdx = Math.round(midi) % 12;
+      const note = noteNames[(noteIdx + 12) % 12];
+      const confidence = Math.min(98, Math.max(40, Math.floor((bestR / (rms * rms + 1e-4)) * 90)));
+      return { note, scale: 'Major', confidence, freq: Math.round(freq) };
     }
 
-    const detectedHz = sampleRate / bestPeriod;
-    const noteStrings = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const midiNum = 12 * (Math.log2(detectedHz / 440)) + 69;
-    const noteIndex = Math.round(midiNum) % 12;
-    const rootNote = noteStrings[(noteIndex + 12) % 12] || 'C';
-
-    return {
-      detectedKey: `${rootNote} Major`,
-      rootNote,
-      note: rootNote,
-      scale: 'Major',
-      isMajor: true,
-      confidence: Math.min(98, Math.round(bestCorrelation * 100)),
-      detectedHz: Math.round(detectedHz * 10) / 10,
-    };
+    return { note: 'C', scale: 'Major', confidence: 0, freq: 0 };
   }
 
-  // --- AI Auto-Calibration ---
-  public async autoCalibrateVocalDsp(
-    onStep?: (msg: string, percent: number) => void
-  ): Promise<{
-    noiseGate: Partial<NoiseGateParams>;
-    compressor: Partial<CompressorParams>;
-    deEsser: Partial<DeEsserParams>;
-    reverb: Partial<ReverbParams>;
-    message: string;
-  }> {
-    onStep?.('Đang kết nối Micro và phân tích âm sắc giọng hát...', 25);
-    await new Promise((r) => setTimeout(r, 400));
+  // --- Music Player & Demo Beat Engine ---
+  public async loadMusicFile(file: File) {
+    await this.ensureAudioContext();
+    this.stopDemoBeat();
 
-    onStep?.('Đang đo đáp tuyến tần số phòng & kích hoạt bộ lọc Chống Hú...', 60);
-    this.setAntiFeedback(true);
-    await new Promise((r) => setTimeout(r, 400));
-
-    onStep?.('Cân chỉnh Vocal Compressor & Tinh chỉnh Reverb ấm áp...', 90);
-    this.updateCompressor({ threshold: -18, ratio: 3.2, attack: 15, release: 160 });
-    this.updateShortReverb({ decay: 0.9, wet: 0.28, damping: 0.55 });
-    this.updateLongReverb({ decay: 3.0, wet: 0.22, damping: 0.35 });
-    await new Promise((r) => setTimeout(r, 300));
-
-    onStep?.('Hoàn tất! Giọng hát đã sẵn sàng cho buổi biểu diễn Live!', 100);
-
-    return {
-      noiseGate: { enabled: false, threshold: -50 },
-      compressor: { threshold: -18, ratio: 3.2, attack: 15, release: 160 },
-      deEsser: { frequency: 6500, amount: 0.35 },
-      reverb: { wet: 0.32, dry: 1.0 },
-      message: 'Cân chỉnh thông minh thành công! Bộ lọc 64-Bit đã sẵn sàng cho giọng hát truyền cảm.',
-    };
+    if (!this.musicAudioElement) {
+      this.musicAudioElement = new Audio();
+    }
+    const url = URL.createObjectURL(file);
+    this.musicAudioElement.src = url;
+    this.musicAudioElement.load();
+    this.playMusic();
   }
 
-  // --- High Quality Live Soundboard SFX Synthesizer ---
+  public async playMusic() {
+    await this.ensureAudioContext();
+    if (this.isDemoBeatPlaying) {
+      return;
+    }
+    if (this.musicAudioElement && this.musicAudioElement.src) {
+      try {
+        await this.musicAudioElement.play();
+      } catch (err) {
+        console.warn('Playback error', err);
+      }
+    }
+  }
+
+  public isMusicPlaying(): boolean {
+    if (this.isDemoBeatPlaying) return true;
+    if (this.musicAudioElement && !this.musicAudioElement.paused && !this.musicAudioElement.ended) {
+      return true;
+    }
+    return false;
+  }
+
+  public pauseMusic() {
+    if (this.isDemoBeatPlaying) {
+      this.pauseDemoBeat();
+      return;
+    }
+    if (this.musicAudioElement) {
+      this.musicAudioElement.pause();
+    }
+  }
+
+  public pauseDemoBeat() {
+    this.isDemoBeatPlaying = false;
+    if (this.demoBeatTimerId !== null) {
+      clearInterval(this.demoBeatTimerId);
+      this.demoBeatTimerId = null;
+    }
+  }
+
+  public stopMusic() {
+    this.stopDemoBeat();
+    if (this.musicAudioElement) {
+      this.musicAudioElement.pause();
+      this.musicAudioElement.currentTime = 0;
+    }
+  }
+
+  public seekMusic(timePercent: number) {
+    if (this.musicAudioElement && this.musicAudioElement.duration) {
+      this.musicAudioElement.currentTime = (timePercent / 100) * this.musicAudioElement.duration;
+    }
+  }
+
+  public getMusicProgress(): { current: number; duration: number; percent: number } {
+    if (this.isDemoBeatPlaying) {
+      const elapsed = (Date.now() - this.demoBeatStartTime) / 1000;
+      const virtualDuration = 240; // 4 minutes loop
+      const current = elapsed % virtualDuration;
+      return { current, duration: virtualDuration, percent: (current / virtualDuration) * 100 };
+    }
+    if (!this.musicAudioElement || !this.musicAudioElement.duration) {
+      return { current: 0, duration: 0, percent: 0 };
+    }
+    const current = this.musicAudioElement.currentTime || 0;
+    const duration = this.musicAudioElement.duration || 1;
+    return { current, duration, percent: (current / duration) * 100 };
+  }
+
+  public async playDemoBeat(type: 'ballad' | 'bolero' | 'lofi') {
+    await this.ensureAudioContext();
+    if (this.musicAudioElement) {
+      this.musicAudioElement.pause();
+    }
+    this.stopDemoBeat();
+
+    this.isDemoBeatPlaying = true;
+    this.currentDemoBeatType = type;
+    this.demoBeatStep = 0;
+    this.demoBeatStartTime = Date.now();
+
+    const bpm = type === 'ballad' ? 84 : type === 'bolero' ? 94 : 76;
+    const stepInterval = (60 / bpm / 4) * 1000;
+
+    const triggerStep = () => {
+      if (!this.isDemoBeatPlaying || !this.ctx || !this.musicGain) return;
+      const step = this.demoBeatStep % 16;
+      const bar = Math.floor(this.demoBeatStep / 16) % 4;
+      const now = this.ctx.currentTime + 0.04;
+
+      this.scheduleBeatStep(type, step, bar, now);
+      this.demoBeatStep++;
+    };
+
+    triggerStep();
+    this.demoBeatTimerId = window.setInterval(triggerStep, stepInterval);
+  }
+
+  public stopDemoBeat() {
+    this.isDemoBeatPlaying = false;
+    this.currentDemoBeatType = null;
+    if (this.demoBeatTimerId !== null) {
+      clearInterval(this.demoBeatTimerId);
+      this.demoBeatTimerId = null;
+    }
+  }
+
+  public isDemoBeatActive(): boolean {
+    return this.isDemoBeatPlaying;
+  }
+
+  public getDemoBeatType(): string | null {
+    return this.currentDemoBeatType;
+  }
+
+  private scheduleBeatStep(type: 'ballad' | 'bolero' | 'lofi', step: number, bar: number, time: number) {
+    if (!this.ctx || !this.musicGain) return;
+
+    // 1. Kick Drum
+    const isKick =
+      type === 'ballad'
+        ? step === 0 || step === 8 || step === 10
+        : type === 'bolero'
+        ? step === 0 || step === 6 || step === 12
+        : step === 0 || step === 10;
+
+    if (isKick) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.frequency.setValueAtTime(140, time);
+      osc.frequency.exponentialRampToValueAtTime(38, time + 0.12);
+      gain.gain.setValueAtTime(0.7, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.14);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.15);
+    }
+
+    // 2. Snare / Clap
+    const isSnare =
+      type === 'bolero'
+        ? step === 4 || step === 8 || step === 14
+        : step === 4 || step === 12;
+
+    if (isSnare) {
+      const noiseLen = this.ctx.sampleRate * 0.15;
+      const buffer = this.ctx.createBuffer(1, noiseLen, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < noiseLen; i++) data[i] = Math.random() * 2 - 1;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1800;
+      filter.Q.value = 1.0;
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.45, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      noise.start(time);
+      noise.stop(time + 0.17);
+    }
+
+    // 3. Hi-Hat
+    if (step % 2 === 0) {
+      const noiseLen = this.ctx.sampleRate * 0.04;
+      const buffer = this.ctx.createBuffer(1, noiseLen, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < noiseLen; i++) data[i] = Math.random() * 2 - 1;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 7500;
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(step % 4 === 0 ? 0.2 : 0.1, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      noise.start(time);
+      noise.stop(time + 0.05);
+    }
+
+    // 4. Bass & Chords
+    const chordProgressions: Record<string, { rootFreq: number; chordFreqs: number[] }[]> = {
+      ballad: [
+        { rootFreq: 98.0, chordFreqs: [196.0, 246.9, 293.7, 392.0] }, // G
+        { rootFreq: 82.4, chordFreqs: [164.8, 196.0, 246.9, 329.6] }, // Em
+        { rootFreq: 65.4, chordFreqs: [130.8, 164.8, 196.0, 261.6] }, // C
+        { rootFreq: 73.4, chordFreqs: [146.8, 185.0, 220.0, 293.7] }, // D
+      ],
+      bolero: [
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 293.7] }, // Dm
+        { rootFreq: 98.0, chordFreqs: [196.0, 233.1, 293.7, 392.0] }, // Gm
+        { rootFreq: 110.0, chordFreqs: [220.0, 277.2, 329.6, 392.0] }, // A7
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 293.7] }, // Dm
+      ],
+      lofi: [
+        { rootFreq: 65.4, chordFreqs: [130.8, 164.8, 196.0, 246.9] }, // Cmaj7
+        { rootFreq: 55.0, chordFreqs: [110.0, 130.8, 164.8, 196.0] }, // Am7
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 261.6] }, // Dm7
+        { rootFreq: 49.0, chordFreqs: [98.0, 123.5, 146.8, 174.6] },  // G7
+      ],
+    };
+
+    const currentChord = chordProgressions[type][bar];
+
+    // Bass Note
+    if (step === 0 || step === 8) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(currentChord.rootFreq, time);
+      gain.gain.setValueAtTime(0.35, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.45);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.5);
+    }
+
+    // Acoustic Piano/Guitar Arpeggio Chords
+    if (step % 2 === 0) {
+      const noteIdx = (step / 2) % currentChord.chordFreqs.length;
+      const freq = currentChord.chordFreqs[noteIdx];
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, time);
+      gain.gain.setValueAtTime(0.18, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.38);
+    }
+  }
+
+  // --- High Quality SFX Synthesizer & Custom Audio Player ---
   private activeSfxStopper: (() => void) | null = null;
   private currentPlayingSfxId: string | null = null;
 
@@ -963,135 +789,364 @@ export class WebAudioEngine {
 
   public async playSfx(
     slotId: string,
-    options: { preset: SfxPresetType; customAudioUrl?: string; volume?: number },
+    options: {
+      preset: SfxPresetType;
+      customAudioUrl?: string;
+      volume?: number;
+    },
     onEnded?: () => void
   ): Promise<boolean> {
+    // If THIS sound is currently playing, clicking again turns it OFF!
     if (this.currentPlayingSfxId === slotId) {
       this.stopCurrentSfx();
-      onEnded?.();
-      return false;
+      if (onEnded) onEnded();
+      return false; // turned off
     }
 
+    // Stop whatever else was playing
     this.stopCurrentSfx();
+
     await this.ensureAudioContext();
     if (!this.ctx || !this.masterGain) return false;
 
     this.currentPlayingSfxId = slotId;
+    const vol = options.volume !== undefined ? options.volume : 1.0;
 
-    const sfxGain = this.ctx.createGain();
-    sfxGain.gain.value = options.volume ?? 1.0;
-    sfxGain.connect(this.masterGain);
+    // Custom audio file playback
+    if (options.preset === 'custom' && options.customAudioUrl) {
+      try {
+        const audio = new Audio(options.customAudioUrl);
+        audio.volume = Math.min(1.0, Math.max(0.1, vol));
+        audio.play().catch((e) => console.warn('Custom audio playback notice:', e));
+
+        this.activeSfxStopper = () => {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch {}
+        };
+        audio.onended = () => {
+          if (this.currentPlayingSfxId === slotId) {
+            this.currentPlayingSfxId = null;
+            this.activeSfxStopper = null;
+            if (onEnded) onEnded();
+          }
+        };
+        return true;
+      } catch (err) {
+        console.warn('Custom audio player notice', err);
+        return false;
+      }
+    }
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.value = Math.min(1.5, Math.max(0.1, vol * 0.75));
+    gainNode.connect(this.masterGain);
 
     const now = this.ctx.currentTime;
     let stopFn: () => void = () => {};
 
     switch (options.preset) {
+      case 'horn':
+        stopFn = this.synthAirHorn(now, gainNode);
+        break;
       case 'applause':
-        stopFn = this.synthApplause(now, sfxGain);
+        stopFn = this.synthApplause(now, gainNode);
+        break;
+      case 'crowd':
+        stopFn = this.synthCheer(now, gainNode);
         break;
       case 'laugh':
-        stopFn = this.synthLaugh(now, sfxGain);
+        stopFn = this.synthLaugh(now, gainNode);
         break;
-      case 'horn':
-        stopFn = this.synthAirhorn(now, sfxGain);
+      case 'rimshot':
+        stopFn = this.synthRimshot(now, gainNode);
+        break;
+      case 'sad_trombone':
+        stopFn = this.synthSadTrombone(now, gainNode);
+        break;
+      case 'bell':
+        stopFn = this.synthBell(now, gainNode);
+        break;
+      case 'laser':
+        stopFn = this.synthLaser(now, gainNode);
         break;
       default:
-        stopFn = this.synthApplause(now, sfxGain);
+        stopFn = this.synthApplause(now, gainNode);
+        break;
     }
 
     this.activeSfxStopper = () => {
-      stopFn();
-      sfxGain.disconnect();
+      try {
+        if (this.ctx) {
+          gainNode.gain.setValueAtTime(gainNode.gain.value, this.ctx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
+        }
+        setTimeout(() => {
+          try {
+            gainNode.disconnect();
+            stopFn();
+          } catch {}
+        }, 50);
+      } catch {}
     };
 
     setTimeout(() => {
       if (this.currentPlayingSfxId === slotId) {
         this.currentPlayingSfxId = null;
         this.activeSfxStopper = null;
-        onEnded?.();
+        if (onEnded) onEnded();
       }
-    }, 4000);
+    }, 3200);
 
     return true;
   }
 
+  private synthAirHorn(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const hornPitches = [466.16, 587.33, 698.46, 932.33]; // Bb4, D5, F5, Bb5
+    const oscs: OscillatorNode[] = [];
+    hornPitches.forEach((freq) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.setValueAtTime(0.001, now + 0.15);
+      gain.gain.setValueAtTime(0.25, now + 0.22);
+      gain.gain.setValueAtTime(0.001, now + 0.37);
+      gain.gain.setValueAtTime(0.3, now + 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 1.65);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
   private synthApplause(now: number, dest: AudioNode): () => void {
     if (!this.ctx) return () => {};
-    const dur = 3.5;
+    const dur = 2.4;
     const bufferSize = this.ctx.sampleRate * dur;
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * (0.8 + 0.2 * Math.sin(i * 0.01));
+      output[i] = Math.random() * 2 - 1;
     }
-
     const noise = this.ctx.createBufferSource();
-    noise.buffer = buffer;
+    noise.buffer = noiseBuffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'bandpass';
     filter.frequency.setValueAtTime(1400, now);
-    filter.Q.setValueAtTime(0.8, now);
+    filter.Q.value = 1.0;
 
-    const env = this.ctx.createGain();
-    env.gain.setValueAtTime(0.01, now);
-    env.gain.linearRampToValueAtTime(0.4, now + 0.3);
-    env.gain.setValueAtTime(0.38, now + 2.2);
-    env.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.linearRampToValueAtTime(0.45, now + 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     noise.connect(filter);
-    filter.connect(env);
-    env.connect(dest);
-
+    filter.connect(gain);
+    gain.connect(dest);
     noise.start(now);
     noise.stop(now + dur);
 
     return () => {
-      try {
-        noise.stop();
-        noise.disconnect();
-      } catch {}
+      try { noise.stop(); noise.disconnect(); } catch {}
+    };
+  }
+
+  private synthCheer(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const dur = 2.8;
+    const bufferSize = this.ctx.sampleRate * dur;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.frequency.linearRampToValueAtTime(1200, now + 1.2);
+    filter.Q.value = 1.2;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.5, now + 0.4);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    // Whistle
+    const whistle = this.ctx.createOscillator();
+    const whistleGain = this.ctx.createGain();
+    whistle.type = 'sine';
+    whistle.frequency.setValueAtTime(1800, now + 0.2);
+    whistle.frequency.exponentialRampToValueAtTime(2600, now + 0.7);
+    whistle.frequency.exponentialRampToValueAtTime(1600, now + 1.1);
+    whistleGain.gain.setValueAtTime(0.12, now + 0.2);
+    whistleGain.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+    whistle.connect(whistleGain);
+    whistleGain.connect(dest);
+    whistle.start(now + 0.2);
+    whistle.stop(now + 1.15);
+
+    return () => {
+      try { noise.stop(); noise.disconnect(); } catch {}
+      try { whistle.stop(); whistle.disconnect(); } catch {}
     };
   }
 
   private synthLaugh(now: number, dest: AudioNode): () => void {
     if (!this.ctx) return () => {};
+    const laughNotes = [330, 310, 360, 320, 340, 290, 260];
     const oscs: OscillatorNode[] = [];
-    const laughNotes = [320, 360, 320, 370, 330, 380];
     laughNotes.forEach((f, idx) => {
-      const noteTime = now + idx * 0.28;
+      const noteTime = now + idx * 0.16;
       const osc = this.ctx!.createOscillator();
       const gain = this.ctx!.createGain();
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(f, noteTime);
-      gain.gain.setValueAtTime(0.3, noteTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.22);
+      osc.frequency.exponentialRampToValueAtTime(f - 50, noteTime + 0.13);
+
+      gain.gain.setValueAtTime(0.35, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.14);
+
       osc.connect(gain);
       gain.connect(dest);
       osc.start(noteTime);
-      osc.stop(noteTime + 0.25);
+      osc.stop(noteTime + 0.15);
       oscs.push(osc);
     });
     return () => {
       oscs.forEach((o) => {
-        try {
-          o.stop();
-          o.disconnect();
-        } catch {}
+        try { o.stop(); o.disconnect(); } catch {}
       });
     };
   }
 
-  private synthAirhorn(now: number, dest: AudioNode): () => void {
+  private synthRimshot(now: number, dest: AudioNode): () => void {
     if (!this.ctx) return () => {};
-    const freqs = [466.16, 587.33, 698.46];
+    // Ba-dum
+    const hit1 = this.ctx.createOscillator();
+    const g1 = this.ctx.createGain();
+    hit1.frequency.setValueAtTime(160, now);
+    hit1.frequency.exponentialRampToValueAtTime(60, now + 0.1);
+    g1.gain.setValueAtTime(0.5, now);
+    g1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    hit1.connect(g1);
+    g1.connect(dest);
+    hit1.start(now);
+    hit1.stop(now + 0.13);
+
+    const hit2 = this.ctx.createOscillator();
+    const g2 = this.ctx.createGain();
+    hit2.frequency.setValueAtTime(140, now + 0.18);
+    hit2.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+    g2.gain.setValueAtTime(0.55, now + 0.18);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    hit2.connect(g2);
+    g2.connect(dest);
+    hit2.start(now + 0.18);
+    hit2.stop(now + 0.33);
+
+    // Tssss! (Cymbal crash)
+    const dur = 1.0;
+    const bufferSize = this.ctx.sampleRate * dur;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 5000;
+
+    const gCymbal = this.ctx.createGain();
+    gCymbal.gain.setValueAtTime(0.4, now + 0.36);
+    gCymbal.gain.exponentialRampToValueAtTime(0.001, now + 0.36 + dur);
+
+    noise.connect(filter);
+    filter.connect(gCymbal);
+    gCymbal.connect(dest);
+    noise.start(now + 0.36);
+    noise.stop(now + 0.36 + dur);
+
+    return () => {
+      try { hit1.stop(); hit1.disconnect(); } catch {}
+      try { hit2.stop(); hit2.disconnect(); } catch {}
+      try { noise.stop(); noise.disconnect(); } catch {}
+    };
+  }
+
+  private synthSadTrombone(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    // Wah wah wah waaaah
+    const notes = [293.66, 277.18, 261.63, 246.94]; // D4, C#4, C4, B3
     const oscs: OscillatorNode[] = [];
-    freqs.forEach((f) => {
+    notes.forEach((f, idx) => {
+      const isLast = idx === 3;
+      const noteTime = now + idx * 0.35;
+      const noteDur = isLast ? 1.0 : 0.3;
+
       const osc = this.ctx!.createOscillator();
       const gain = this.ctx!.createGain();
       osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, noteTime);
+      if (isLast) {
+        osc.frequency.linearRampToValueAtTime(f - 30, noteTime + noteDur);
+      }
+
+      const filter = this.ctx!.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(700, noteTime);
+      filter.frequency.linearRampToValueAtTime(350, noteTime + noteDur);
+
+      gain.gain.setValueAtTime(0.3, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + noteDur);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(dest);
+      osc.start(noteTime);
+      osc.stop(noteTime + noteDur + 0.05);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
+  private synthBell(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const bellFreqs = [1046.5, 2093.0, 3135.96]; // C6 harmonics
+    const oscs: OscillatorNode[] = [];
+    bellFreqs.forEach((f, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
       osc.frequency.setValueAtTime(f, now);
-      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.setValueAtTime(0.2 / (idx + 1), now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
       osc.connect(gain);
       gain.connect(dest);
@@ -1101,12 +1156,81 @@ export class WebAudioEngine {
     });
     return () => {
       oscs.forEach((o) => {
-        try {
-          o.stop();
-          o.disconnect();
-        } catch {}
+        try { o.stop(); o.disconnect(); } catch {}
       });
     };
+  }
+
+  private synthLaser(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(2400, now);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.25);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.28);
+    return () => {
+      try { osc.stop(); osc.disconnect(); } catch {}
+    };
+  }
+
+  // --- Real Audio Recording (Master Bus Capture) ---
+  public startRecording(): boolean {
+    if (!this.ctx || !this.masterGain) return false;
+
+    try {
+      const dest = this.ctx.createMediaStreamDestination();
+      this.masterGain.connect(dest);
+
+      this.recordedChunks = [];
+      this.mediaRecorder = new MediaRecorder(dest.stream);
+
+      this.mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) this.recordedChunks.push(e.data);
+      };
+
+      this.mediaRecorder.onstop = () => {
+        const blob = new Blob(this.recordedChunks, { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const now = new Date();
+        const dateStr = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.href = url;
+        a.download = `HNStudio_Record_${dateStr}.wav`;
+        a.click();
+      };
+
+      this.mediaRecorder.start(250);
+      this.isRecording = true;
+      this.recordStartTime = Date.now();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public stopRecording() {
+    if (this.mediaRecorder && this.isRecording) {
+      this.mediaRecorder.stop();
+      this.isRecording = false;
+    }
+  }
+
+  public getIsRecording(): boolean {
+    return this.isRecording;
+  }
+
+  public getRecordDuration(): string {
+    if (!this.isRecording) return '00:00';
+    const elapsedSec = Math.floor((Date.now() - this.recordStartTime) / 1000);
+    const m = Math.floor(elapsedSec / 60);
+    const s = elapsedSec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 }
 

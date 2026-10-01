@@ -40,28 +40,6 @@ export interface ReverbParams {
   preset: string;
 }
 
-export interface ShortReverbParams {
-  enabled: boolean;
-  decay: number; // 0.4s - 1.5s (Vang ngắn ấm áp, bắt mic)
-  wet: number;   // 0..1
-  damping: number;
-}
-
-export interface LongReverbParams {
-  enabled: boolean;
-  decay: number; // 2.0s - 6.0s (Vang dài ngân nga bay bổng)
-  wet: number;   // 0..1
-  damping: number;
-}
-
-export interface EchoDelayParams {
-  enabled: boolean;
-  time: number;     // ms (80ms - 600ms)
-  feedback: number; // 0..0.85 (Độ lặp)
-  wet: number;      // 0..1 (Âm lượng tiếng vọng)
-  hiCut: number;    // Hz (Bộ lọc ấm tiếng vọng analog)
-}
-
 export interface LimiterParams {
   enabled: boolean;
   threshold: number; // dB
