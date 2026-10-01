@@ -85,15 +85,7 @@ export class WebAudioEngine {
   public async init(): Promise<boolean> {
     if (!this.ctx) {
       const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      try {
-        // Ultra Low Latency configuration (2ms - 5ms hardware buffer)
-        this.ctx = new AudioCtxClass({
-          latencyHint: 'interactive',
-          sampleRate: 48000,
-        });
-      } catch {
-        this.ctx = new AudioCtxClass();
-      }
+      this.ctx = new AudioCtxClass();
     }
 
     if (this.ctx.state === 'suspended') {
@@ -219,30 +211,17 @@ export class WebAudioEngine {
     this.micGain.connect(this.micAnalyser!);
   }
 
-  public async startLiveMic(deviceId?: string): Promise<boolean> {
+  public async startLiveMic(): Promise<boolean> {
     try {
       await this.init();
       if (!this.ctx || !this.gateGainNode) return false;
 
-      // Ultra-low latency constraints: disable all DSP bloat in browser/OS layer
-      const audioConstraints: Record<string, unknown> = {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: false,
-        autoGainControl: false,
-        noiseSuppression: false,
-        channelCount: { ideal: 1 },
-        sampleRate: { ideal: 48000 },
-        latency: { ideal: 0.001, max: 0.005 },
-        googEchoCancellation: false,
-        googAutoGainControl: false,
-        googNoiseSuppression: false,
-        googHighpassFilter: false,
-        googAudioMirroring: false,
-        googTypingNoiseDetection: false,
-      };
-
       this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints as unknown as MediaTrackConstraints,
+        audio: {
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: false,
+        },
       });
 
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
@@ -254,13 +233,6 @@ export class WebAudioEngine {
       this.isLive = true;
       return true;
     }
-  }
-
-  public getLatencyMs(): number {
-    if (!this.ctx) return 2.8;
-    const baseLat = (this.ctx as unknown as { baseLatency?: number }).baseLatency || 0.002;
-    const outLat = (this.ctx as unknown as { outputLatency?: number }).outputLatency || 0.002;
-    return Math.max(1.8, Math.round((baseLat + outLat) * 1000 * 10) / 10);
   }
 
   public stopLiveMic() {

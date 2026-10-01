@@ -656,67 +656,56 @@ export const Popups: React.FC<PopupsProps> = ({
   // 8. AUDIO I/O POPUP
   if (activePopup === 'audio_io') {
     return renderModal(
-      'CẤU HÌNH AUDIO I/O & ĐỘ TRỄ MICRO (ZERO-LATENCY TURBO)',
+      'CẤU HÌNH AUDIO INPUT / OUTPUT',
       <Sliders className="w-4 h-4 text-[#00f0ff]" />,
       <div className="space-y-4">
-        <div className="bg-[#00ff88]/10 border border-[#00ff88]/30 rounded-xl p-3 flex items-center justify-between">
-          <div>
-            <span className="text-xs font-bold text-[#00ff88] flex items-center space-x-1.5">
-              <Zap className="w-4 h-4 fill-current text-[#00ff88]" />
-              <span>Chế độ Siêu Tốc Độ (Ultra-Low Latency Turbo): BẬT</span>
-            </span>
-            <span className="text-[11px] text-[#94a3b8]">Độ trễ đo thực tế: ~1.8ms - 2.8ms (Không còn cảm giác giật tiếng hay trễ tiếng)</span>
-          </div>
-          <span className="px-2.5 py-1 rounded bg-[#00ff88] text-[#0a0d14] text-xs font-black">
-            ASIO / WASAPI 0ms
-          </span>
-        </div>
+        <p className="text-xs text-[#94a3b8]">
+          Hỗ trợ chọn thiết bị Microphone USB, Soundcard, Audio Interface (Focusrite, Behringer, Yamaha, Steinberg...) với chuẩn WASAPI Exclusive và ASIO độ trễ cực thấp.
+        </p>
 
         <div className="space-y-3 bg-[#0a0d14] p-4 rounded-xl border border-[#1e293b]">
           <div>
-            <label className="text-xs text-[#94a3b8] block mb-1 font-semibold">Thiết Bị Đầu Vào (Microphone Input)</label>
-            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none focus:border-[#00f0ff]">
+            <label className="text-xs text-[#94a3b8] block mb-1">Thiết Bị Đầu Vào (Microphone Input)</label>
+            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none">
               <option>Default Microphone (USB Audio Device / Interface)</option>
-              <option>Focusrite Scarlett 2i2 USB (ASIO Ultra-Low)</option>
-              <option>Realtek High Definition Audio (WASAPI Exclusive)</option>
-              <option>Soundcard K10 / ICON Upod Pro USB</option>
-              <option>Yamaha AG03 / AG06 Live Streamer</option>
+              <option>Focusrite Scarlett 2i2 USB (ASIO)</option>
+              <option>Realtek High Definition Audio (WASAPI)</option>
             </select>
           </div>
 
           <div>
-            <label className="text-xs text-[#94a3b8] block mb-1 font-semibold">Thiết Bị Đầu Ra (Headphone / Speaker Output)</label>
-            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none focus:border-[#00f0ff]">
+            <label className="text-xs text-[#94a3b8] block mb-1">Thiết Bị Đầu Ra (Headphone / Speaker Output)</label>
+            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none">
               <option>Default Headphones / Speakers (Realtek / USB Interface)</option>
-              <option>Focusrite USB Audio Out (Direct Monitor)</option>
-              <option>Tai nghe kiểm âm 3.5mm / USB Stereo Out</option>
+              <option>Focusrite USB Audio Out</option>
+              <option>Direct Sound Headphones</option>
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
-              <label className="text-xs text-[#94a3b8] block mb-1 font-semibold">Sample Rate</label>
+              <label className="text-xs text-[#94a3b8] block mb-1">Sample Rate</label>
               <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e]">
-                <option>48000 Hz (Khuyên dùng cho Live Karaoke)</option>
-                <option>44100 Hz (Chuẩn CD)</option>
-                <option>96000 Hz (High-Resolution Studio)</option>
+                <option>48000 Hz (Khuyên dùng)</option>
+                <option>44100 Hz</option>
+                <option>96000 Hz</option>
               </select>
             </div>
 
             <div>
-              <label className="text-xs text-[#94a3b8] block mb-1 font-semibold">Hardware Buffer Size</label>
-              <select className="w-full bg-[#161f30] text-[#00ff88] font-mono text-xs p-2 rounded-lg border border-[#00ff88]/40">
-                <option>128 Samples (~2.6 ms - Siêu Nhạy Hát Live)</option>
-                <option>64 Samples (~1.3 ms - Chuyên Nghiệp)</option>
-                <option>256 Samples (~5.3 ms - Cân bằng)</option>
+              <label className="text-xs text-[#94a3b8] block mb-1">Buffer Size</label>
+              <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e]">
+                <option>256 Samples (~5.3 ms độ trễ)</option>
+                <option>512 Samples (~10.6 ms độ trễ chuẩn)</option>
+                <option>128 Samples (Ultra Low Latency)</option>
               </select>
             </div>
           </div>
         </div>
 
         <div className="p-3 bg-[#161f30] rounded-lg border border-[#00f0ff]/30 text-xs text-[#00f0ff] flex items-center space-x-2">
-          <Check className="w-4 h-4 text-[#00ff88] flex-shrink-0" />
-          <span>Đã kích hoạt chế độ chống trễ âm thanh Direct Audio Stream, bypass toàn bộ bộ lọc trễ của hệ điều hành!</span>
+          <Check className="w-4 h-4 text-[#00ff88]" />
+          <span>Bảo vệ chống crash: Tự động ngắt kết nối an toàn khi thiết bị bị rút khỏi cổng USB mà không làm treo app!</span>
         </div>
       </div>
     );
