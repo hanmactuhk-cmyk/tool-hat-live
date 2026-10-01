@@ -76,3 +76,24 @@ export interface AudioMeterData {
   outRms: number;
   isClipping: boolean;
 }
+
+export type SfxPresetType =
+  | 'applause'
+  | 'laugh'
+  | 'horn'
+  | 'crowd'
+  | 'rimshot'
+  | 'sad_trombone'
+  | 'bell'
+  | 'laser'
+  | 'custom';
+
+export interface SfxSlot {
+  id: string;
+  name: string;
+  preset: SfxPresetType;
+  customAudioUrl?: string;
+  customFileName?: string;
+  volume: number;
+  color: string;
+}

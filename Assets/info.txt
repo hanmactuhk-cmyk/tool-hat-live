@@ -1,0 +1,3 @@
+HNStudio Musik AI Assets Folder
+Author: Hoài Nguyễn Studio (Zalo: 0965.043.000)
+Contains icons, presets and default configurations.

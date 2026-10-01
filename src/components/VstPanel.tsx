@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Plus, ExternalLink, ArrowUp, ArrowDown, Trash2, Power } from 'lucide-react';
+import { Sparkles, Plus, ExternalLink, ArrowUp, ArrowDown, Trash2, Power, Settings, Search } from 'lucide-react';
 import { AutoKeyParams, VstPluginSlot } from '../types/audio';
 
 interface VstPanelProps {
@@ -12,6 +12,7 @@ interface VstPanelProps {
   onRemoveVst: (id: string) => void;
   onOpenVstEditor: (id: string) => void;
   onAddVstClick: () => void;
+  onOpenVstSettings: () => void;
 }
 
 export const VstPanel: React.FC<VstPanelProps> = ({
@@ -24,6 +25,7 @@ export const VstPanel: React.FC<VstPanelProps> = ({
   onRemoveVst,
   onOpenVstEditor,
   onAddVstClick,
+  onOpenVstSettings,
 }) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -37,7 +39,7 @@ export const VstPanel: React.FC<VstPanelProps> = ({
             </span>
             <button
               onClick={() => onOpenPopup('auto_key')}
-              className="px-2 py-0.5 rounded text-[11px] font-semibold bg-[#d946ef]/20 text-[#d946ef] border border-[#d946ef]/40 hover:bg-[#d946ef]/30 transition-colors"
+              className="px-2 py-0.5 rounded text-[11px] font-semibold bg-[#d946ef]/20 text-[#d946ef] border border-[#d946ef]/40 hover:bg-[#d946ef]/30 transition-colors cursor-pointer"
             >
               Chỉnh Tune
             </button>
@@ -97,7 +99,7 @@ export const VstPanel: React.FC<VstPanelProps> = ({
       {/* 2 & 3. VST3 INSERT RACK */}
       <div className="md:col-span-2 bg-[#101622] rounded-xl border border-[#25334e] p-3 shadow-lg flex flex-col justify-between">
         <div>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <div className="flex items-center space-x-2">
               <span className="text-xs font-bold text-[#00f0ff] uppercase tracking-wider">
                 VST3 INSERT RACK (CHÈN PLUGIN THẬT)
@@ -108,19 +110,32 @@ export const VstPanel: React.FC<VstPanelProps> = ({
             </div>
 
             <div className="flex items-center space-x-2">
+              {/* + ADD VST3 Button */}
               <button
                 onClick={onAddVstClick}
-                className="px-3 py-1 rounded-lg text-xs font-bold bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 hover:bg-[#00f0ff]/30 transition-colors flex items-center space-x-1 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 hover:bg-[#00f0ff]/30 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-[0_0_10px_rgba(0,240,255,0.2)]"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ ADD VST3</span>
               </button>
 
+              {/* SCAN VST Quick Button */}
               <button
-                onClick={() => onOpenPopup('vst_manager')}
-                className="px-2.5 py-1 rounded-lg text-xs font-medium bg-[#1e2942] text-[#94a3b8] hover:text-[#f8fafc] border border-[#25334e] transition-colors cursor-pointer"
+                onClick={onOpenVstSettings}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#a855f7]/20 text-[#a855f7] border border-[#a855f7]/40 hover:bg-[#a855f7]/30 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-[0_0_10px_rgba(168,85,247,0.2)]"
               >
-                Quản lý
+                <Search className="w-3.5 h-3.5" />
+                <span>SCAN VST</span>
+              </button>
+
+              {/* VST Settings Button */}
+              <button
+                onClick={onOpenVstSettings}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#1e2942] text-[#94a3b8] hover:text-[#f8fafc] border border-[#25334e] transition-colors flex items-center space-x-1 cursor-pointer"
+                title="Cài đặt thư mục quét VST"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Cài đặt</span>
               </button>
             </div>
           </div>
@@ -131,7 +146,7 @@ export const VstPanel: React.FC<VstPanelProps> = ({
               <div className="text-center py-6 border border-dashed border-[#25334e] rounded-lg bg-[#0a0d14]">
                 <p className="text-xs text-[#94a3b8] mb-1">Chưa có plugin VST3 nào được nạp</p>
                 <p className="text-[11px] text-[#64748b]">
-                  Bấm nút <span className="text-[#00f0ff] font-semibold">+ ADD VST3</span> để nạp Auto-Tune, FabFilter, Waves, iZotope...
+                  Bấm nút <button onClick={onAddVstClick} className="text-[#00f0ff] font-semibold underline underline-offset-2 hover:text-[#38bdf8]">+ ADD VST3</button> hoặc <button onClick={onOpenVstSettings} className="text-[#a855f7] font-semibold underline underline-offset-2 hover:text-[#c084fc]">SCAN VST</button> để quét và chèn Auto-Tune, FabFilter, Waves, iZotope...
                 </p>
               </div>
             ) : (

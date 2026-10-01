@@ -9,6 +9,32 @@
     <meta property="og:description" content="Phần mềm hát LIVE chuyên nghiệp trên Windows với Auto-Tune/VST3, Noise Gate, Compressor, Parametric EQ, De-Esser, Reverb, Realtime Waveform và Audio Routing" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          var currentFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() { return currentFetch; },
+            set: function(fn) { currentFetch = fn; },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          try {
+            if (typeof Window !== 'undefined' && Window.prototype) {
+              var orig = window.fetch;
+              Object.defineProperty(Window.prototype, 'fetch', {
+                get: function() { return orig; },
+                set: function(fn) { orig = fn; },
+                configurable: true,
+                enumerable: true
+              });
+            }
+          } catch (e2) {}
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

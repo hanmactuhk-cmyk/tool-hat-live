@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Copy, Check, Download, Github, Code, Terminal, FileText } from 'lucide-react';
+import { generateAndDownloadProjectZip } from '../utils/projectZipBuilder';
 
 interface ProjectCodeViewerProps {
   isOpen: boolean;
@@ -38,24 +39,21 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup MSVC Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Setup Ninja
-        uses: ninja-build/setup-ninja@v1
-
       - name: Configure CMake
+        shell: pwsh
         run: |
-          cmake -B build -G "Ninja" \`
-            -DCMAKE_BUILD_TYPE=Release \`
-            -DCMAKE_C_COMPILER=cl \`
-            -DCMAKE_CXX_COMPILER=cl
+          $sourceDir = "."
+          if (Test-Path "HNStudio-Musik-AI/CMakeLists.txt") {
+              if (-not (Test-Path "CMakeLists.txt")) {
+                  $sourceDir = "HNStudio-Musik-AI"
+              }
+          }
+          Write-Host "Configuring CMake with source dir: $sourceDir"
+          cmake -B build -S $sourceDir -G "Visual Studio 17 2022" -A x64
 
       - name: Build HNStudio Musik AI (Release)
         run: |
-          cmake --build build --config Release --target HNStudioMusikAI
+          cmake --build build --config Release --target HNStudioMusikAI --parallel
 
       - name: Prepare Release Package
         shell: pwsh
@@ -70,6 +68,8 @@ jobs:
           }
           if (Test-Path "README.md") {
               Copy-Item -Path "README.md" -Destination dist\\HNStudio-Musik-AI\\
+          } elseif (Test-Path "HNStudio-Musik-AI/README.md") {
+              Copy-Item -Path "HNStudio-Musik-AI/README.md" -Destination dist\\HNStudio-Musik-AI\\
           }
           New-Item -ItemType Directory -Force -Path dist\\HNStudio-Musik-AI\\Recordings
           New-Item -ItemType Directory -Force -Path dist\\HNStudio-Musik-AI\\Projects
@@ -177,14 +177,13 @@ git push -u origin main`;
           </div>
 
           <div className="flex items-center space-x-2">
-            <a
-              href="/HNStudio-Musik-AI.zip"
-              download="HNStudio-Musik-AI.zip"
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#00f0ff] to-[#a855f7] text-[#0a0d14] flex items-center space-x-1.5 shadow-md cursor-pointer"
+            <button
+              onClick={() => generateAndDownloadProjectZip()}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#00f0ff] to-[#a855f7] text-[#0a0d14] flex items-center space-x-1.5 shadow-md cursor-pointer hover:shadow-[0_0_15px_rgba(0,240,255,0.5)] transition-all"
             >
               <Download className="w-3.5 h-3.5" />
               <span>TẢI ZIP DỰ ÁN</span>
-            </a>
+            </button>
 
             <button
               onClick={onClose}

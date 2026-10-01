@@ -6,6 +6,7 @@ import {
   ReverbParams,
   LimiterParams,
   AudioMeterData,
+  SfxPresetType,
 } from '../types/audio';
 
 export const DEFAULT_EQ_FREQS = [
@@ -59,6 +60,27 @@ export class WebAudioEngine {
   // Meters
   private isLive = false;
   private isClipping = false;
+
+  // Demo Beat state
+  private isDemoBeatPlaying = false;
+  private currentDemoBeatType: 'ballad' | 'bolero' | 'lofi' | null = null;
+  private demoBeatTimerId: number | null = null;
+  private demoBeatStep = 0;
+  private demoBeatStartTime = 0;
+
+  public async ensureAudioContext(): Promise<AudioContext> {
+    if (!this.ctx) {
+      await this.init();
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (e) {
+        console.warn('AudioContext resume notice:', e);
+      }
+    }
+    return this.ctx!;
+  }
 
   public async init(): Promise<boolean> {
     if (!this.ctx) {
@@ -358,7 +380,7 @@ export class WebAudioEngine {
       micData.fill(0);
     }
 
-    if (this.masterAnalyser && this.isLive) {
+    if (this.masterAnalyser) {
       this.masterAnalyser.getFloatTimeDomainData(masterData as Float32Array<ArrayBuffer>);
     } else {
       masterData.fill(0);
@@ -366,13 +388,9 @@ export class WebAudioEngine {
   }
 
   public getMeterData(): AudioMeterData {
-    if (!this.isLive) {
-      return { micPeak: 0, micRms: 0, outPeak: 0, outRms: 0, isClipping: false };
-    }
-
     const data = new Float32Array(256);
     let micPeak = 0, micSum = 0;
-    if (this.micAnalyser) {
+    if (this.micAnalyser && this.isLive) {
       this.micAnalyser.getFloatTimeDomainData(data);
       for (let i = 0; i < data.length; i++) {
         const abs = Math.abs(data[i]);
@@ -459,23 +477,62 @@ export class WebAudioEngine {
     return { note: 'C', scale: 'Major', confidence: 0, freq: 0 };
   }
 
-  // --- Music Player Methods ---
-  public loadMusicFile(file: File) {
-    if (!this.musicAudioElement) return;
+  // --- Music Player & Demo Beat Engine ---
+  public async loadMusicFile(file: File) {
+    await this.ensureAudioContext();
+    this.stopDemoBeat();
+
+    if (!this.musicAudioElement) {
+      this.musicAudioElement = new Audio();
+    }
     const url = URL.createObjectURL(file);
     this.musicAudioElement.src = url;
     this.musicAudioElement.load();
+    this.playMusic();
   }
 
-  public playMusic() {
-    if (this.musicAudioElement) this.musicAudioElement.play().catch(() => {});
+  public async playMusic() {
+    await this.ensureAudioContext();
+    if (this.isDemoBeatPlaying) {
+      return;
+    }
+    if (this.musicAudioElement && this.musicAudioElement.src) {
+      try {
+        await this.musicAudioElement.play();
+      } catch (err) {
+        console.warn('Playback error', err);
+      }
+    }
+  }
+
+  public isMusicPlaying(): boolean {
+    if (this.isDemoBeatPlaying) return true;
+    if (this.musicAudioElement && !this.musicAudioElement.paused && !this.musicAudioElement.ended) {
+      return true;
+    }
+    return false;
   }
 
   public pauseMusic() {
-    if (this.musicAudioElement) this.musicAudioElement.pause();
+    if (this.isDemoBeatPlaying) {
+      this.pauseDemoBeat();
+      return;
+    }
+    if (this.musicAudioElement) {
+      this.musicAudioElement.pause();
+    }
+  }
+
+  public pauseDemoBeat() {
+    this.isDemoBeatPlaying = false;
+    if (this.demoBeatTimerId !== null) {
+      clearInterval(this.demoBeatTimerId);
+      this.demoBeatTimerId = null;
+    }
   }
 
   public stopMusic() {
+    this.stopDemoBeat();
     if (this.musicAudioElement) {
       this.musicAudioElement.pause();
       this.musicAudioElement.currentTime = 0;
@@ -489,6 +546,12 @@ export class WebAudioEngine {
   }
 
   public getMusicProgress(): { current: number; duration: number; percent: number } {
+    if (this.isDemoBeatPlaying) {
+      const elapsed = (Date.now() - this.demoBeatStartTime) / 1000;
+      const virtualDuration = 240; // 4 minutes loop
+      const current = elapsed % virtualDuration;
+      return { current, duration: virtualDuration, percent: (current / virtualDuration) * 100 };
+    }
     if (!this.musicAudioElement || !this.musicAudioElement.duration) {
       return { current: 0, duration: 0, percent: 0 };
     }
@@ -497,64 +560,595 @@ export class WebAudioEngine {
     return { current, duration, percent: (current / duration) * 100 };
   }
 
-  // --- SFX Synthesizer ---
-  public playSfx(type: 'laugh' | 'applause' | 'crowd' | 'horn') {
-    if (!this.ctx || !this.masterGain) return;
-    const now = this.ctx.currentTime;
+  public async playDemoBeat(type: 'ballad' | 'bolero' | 'lofi') {
+    await this.ensureAudioContext();
+    if (this.musicAudioElement) {
+      this.musicAudioElement.pause();
+    }
+    this.stopDemoBeat();
 
-    if (type === 'horn') {
+    this.isDemoBeatPlaying = true;
+    this.currentDemoBeatType = type;
+    this.demoBeatStep = 0;
+    this.demoBeatStartTime = Date.now();
+
+    const bpm = type === 'ballad' ? 84 : type === 'bolero' ? 94 : 76;
+    const stepInterval = (60 / bpm / 4) * 1000;
+
+    const triggerStep = () => {
+      if (!this.isDemoBeatPlaying || !this.ctx || !this.musicGain) return;
+      const step = this.demoBeatStep % 16;
+      const bar = Math.floor(this.demoBeatStep / 16) % 4;
+      const now = this.ctx.currentTime + 0.04;
+
+      this.scheduleBeatStep(type, step, bar, now);
+      this.demoBeatStep++;
+    };
+
+    triggerStep();
+    this.demoBeatTimerId = window.setInterval(triggerStep, stepInterval);
+  }
+
+  public stopDemoBeat() {
+    this.isDemoBeatPlaying = false;
+    this.currentDemoBeatType = null;
+    if (this.demoBeatTimerId !== null) {
+      clearInterval(this.demoBeatTimerId);
+      this.demoBeatTimerId = null;
+    }
+  }
+
+  public isDemoBeatActive(): boolean {
+    return this.isDemoBeatPlaying;
+  }
+
+  public getDemoBeatType(): string | null {
+    return this.currentDemoBeatType;
+  }
+
+  private scheduleBeatStep(type: 'ballad' | 'bolero' | 'lofi', step: number, bar: number, time: number) {
+    if (!this.ctx || !this.musicGain) return;
+
+    // 1. Kick Drum
+    const isKick =
+      type === 'ballad'
+        ? step === 0 || step === 8 || step === 10
+        : type === 'bolero'
+        ? step === 0 || step === 6 || step === 12
+        : step === 0 || step === 10;
+
+    if (isKick) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(466.16, now); // Bb4
-      osc.frequency.setValueAtTime(587.33, now + 0.3); // D5
-      osc.frequency.setValueAtTime(466.16, now + 0.5);
-      gain.gain.setValueAtTime(0.4, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      osc.frequency.setValueAtTime(140, time);
+      osc.frequency.exponentialRampToValueAtTime(38, time + 0.12);
+      gain.gain.setValueAtTime(0.7, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.14);
       osc.connect(gain);
-      gain.connect(this.masterGain);
-      osc.start(now);
-      osc.stop(now + 1.2);
-    } else if (type === 'applause' || type === 'crowd') {
-      const bufferSize = this.ctx.sampleRate * 2.0;
-      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
-      }
-      const whiteNoise = this.ctx.createBufferSource();
-      whiteNoise.buffer = noiseBuffer;
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.15);
+    }
+
+    // 2. Snare / Clap
+    const isSnare =
+      type === 'bolero'
+        ? step === 4 || step === 8 || step === 14
+        : step === 4 || step === 12;
+
+    if (isSnare) {
+      const noiseLen = this.ctx.sampleRate * 0.15;
+      const buffer = this.ctx.createBuffer(1, noiseLen, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < noiseLen; i++) data[i] = Math.random() * 2 - 1;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
-      filter.frequency.value = type === 'applause' ? 1200 : 700;
-      filter.Q.value = 1.2;
+      filter.frequency.value = 1800;
+      filter.Q.value = 1.0;
 
       const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 2.0);
+      gain.gain.setValueAtTime(0.45, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
 
-      whiteNoise.connect(filter);
+      noise.connect(filter);
       filter.connect(gain);
-      gain.connect(this.masterGain);
-      whiteNoise.start(now);
-      whiteNoise.stop(now + 2.0);
-    } else {
-      // Laugh synth
+      gain.connect(this.musicGain);
+      noise.start(time);
+      noise.stop(time + 0.17);
+    }
+
+    // 3. Hi-Hat
+    if (step % 2 === 0) {
+      const noiseLen = this.ctx.sampleRate * 0.04;
+      const buffer = this.ctx.createBuffer(1, noiseLen, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < noiseLen; i++) data[i] = Math.random() * 2 - 1;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 7500;
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(step % 4 === 0 ? 0.2 : 0.1, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      noise.start(time);
+      noise.stop(time + 0.05);
+    }
+
+    // 4. Bass & Chords
+    const chordProgressions: Record<string, { rootFreq: number; chordFreqs: number[] }[]> = {
+      ballad: [
+        { rootFreq: 98.0, chordFreqs: [196.0, 246.9, 293.7, 392.0] }, // G
+        { rootFreq: 82.4, chordFreqs: [164.8, 196.0, 246.9, 329.6] }, // Em
+        { rootFreq: 65.4, chordFreqs: [130.8, 164.8, 196.0, 261.6] }, // C
+        { rootFreq: 73.4, chordFreqs: [146.8, 185.0, 220.0, 293.7] }, // D
+      ],
+      bolero: [
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 293.7] }, // Dm
+        { rootFreq: 98.0, chordFreqs: [196.0, 233.1, 293.7, 392.0] }, // Gm
+        { rootFreq: 110.0, chordFreqs: [220.0, 277.2, 329.6, 392.0] }, // A7
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 293.7] }, // Dm
+      ],
+      lofi: [
+        { rootFreq: 65.4, chordFreqs: [130.8, 164.8, 196.0, 246.9] }, // Cmaj7
+        { rootFreq: 55.0, chordFreqs: [110.0, 130.8, 164.8, 196.0] }, // Am7
+        { rootFreq: 73.4, chordFreqs: [146.8, 174.6, 220.0, 261.6] }, // Dm7
+        { rootFreq: 49.0, chordFreqs: [98.0, 123.5, 146.8, 174.6] },  // G7
+      ],
+    };
+
+    const currentChord = chordProgressions[type][bar];
+
+    // Bass Note
+    if (step === 0 || step === 8) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(320, now);
-      for (let i = 0; i < 6; i++) {
-        osc.frequency.setValueAtTime(300 + (i % 2 === 0 ? 60 : -40), now + i * 0.2);
-      }
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+      osc.frequency.setValueAtTime(currentChord.rootFreq, time);
+      gain.gain.setValueAtTime(0.35, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.45);
       osc.connect(gain);
-      gain.connect(this.masterGain);
-      osc.start(now);
-      osc.stop(now + 1.4);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.5);
     }
+
+    // Acoustic Piano/Guitar Arpeggio Chords
+    if (step % 2 === 0) {
+      const noteIdx = (step / 2) % currentChord.chordFreqs.length;
+      const freq = currentChord.chordFreqs[noteIdx];
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, time);
+      gain.gain.setValueAtTime(0.18, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.38);
+    }
+  }
+
+  // --- High Quality SFX Synthesizer & Custom Audio Player ---
+  private activeSfxStopper: (() => void) | null = null;
+  private currentPlayingSfxId: string | null = null;
+
+  public stopCurrentSfx() {
+    if (this.activeSfxStopper) {
+      try {
+        this.activeSfxStopper();
+      } catch (e) {
+        console.warn('SFX stop error', e);
+      }
+      this.activeSfxStopper = null;
+    }
+    this.currentPlayingSfxId = null;
+  }
+
+  public getActiveSfxId(): string | null {
+    return this.currentPlayingSfxId;
+  }
+
+  public async playSfx(
+    slotId: string,
+    options: {
+      preset: SfxPresetType;
+      customAudioUrl?: string;
+      volume?: number;
+    },
+    onEnded?: () => void
+  ): Promise<boolean> {
+    // If THIS sound is currently playing, clicking again turns it OFF!
+    if (this.currentPlayingSfxId === slotId) {
+      this.stopCurrentSfx();
+      if (onEnded) onEnded();
+      return false; // turned off
+    }
+
+    // Stop whatever else was playing
+    this.stopCurrentSfx();
+
+    await this.ensureAudioContext();
+    if (!this.ctx || !this.masterGain) return false;
+
+    this.currentPlayingSfxId = slotId;
+    const vol = options.volume !== undefined ? options.volume : 1.0;
+
+    // Custom audio file playback
+    if (options.preset === 'custom' && options.customAudioUrl) {
+      try {
+        const audio = new Audio(options.customAudioUrl);
+        audio.volume = Math.min(1.0, Math.max(0.1, vol));
+        audio.play().catch((e) => console.warn('Custom audio playback notice:', e));
+
+        this.activeSfxStopper = () => {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch {}
+        };
+        audio.onended = () => {
+          if (this.currentPlayingSfxId === slotId) {
+            this.currentPlayingSfxId = null;
+            this.activeSfxStopper = null;
+            if (onEnded) onEnded();
+          }
+        };
+        return true;
+      } catch (err) {
+        console.warn('Custom audio player notice', err);
+        return false;
+      }
+    }
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.value = Math.min(1.5, Math.max(0.1, vol * 0.75));
+    gainNode.connect(this.masterGain);
+
+    const now = this.ctx.currentTime;
+    let stopFn: () => void = () => {};
+
+    switch (options.preset) {
+      case 'horn':
+        stopFn = this.synthAirHorn(now, gainNode);
+        break;
+      case 'applause':
+        stopFn = this.synthApplause(now, gainNode);
+        break;
+      case 'crowd':
+        stopFn = this.synthCheer(now, gainNode);
+        break;
+      case 'laugh':
+        stopFn = this.synthLaugh(now, gainNode);
+        break;
+      case 'rimshot':
+        stopFn = this.synthRimshot(now, gainNode);
+        break;
+      case 'sad_trombone':
+        stopFn = this.synthSadTrombone(now, gainNode);
+        break;
+      case 'bell':
+        stopFn = this.synthBell(now, gainNode);
+        break;
+      case 'laser':
+        stopFn = this.synthLaser(now, gainNode);
+        break;
+      default:
+        stopFn = this.synthApplause(now, gainNode);
+        break;
+    }
+
+    this.activeSfxStopper = () => {
+      try {
+        if (this.ctx) {
+          gainNode.gain.setValueAtTime(gainNode.gain.value, this.ctx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
+        }
+        setTimeout(() => {
+          try {
+            gainNode.disconnect();
+            stopFn();
+          } catch {}
+        }, 50);
+      } catch {}
+    };
+
+    setTimeout(() => {
+      if (this.currentPlayingSfxId === slotId) {
+        this.currentPlayingSfxId = null;
+        this.activeSfxStopper = null;
+        if (onEnded) onEnded();
+      }
+    }, 3200);
+
+    return true;
+  }
+
+  private synthAirHorn(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const hornPitches = [466.16, 587.33, 698.46, 932.33]; // Bb4, D5, F5, Bb5
+    const oscs: OscillatorNode[] = [];
+    hornPitches.forEach((freq) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.setValueAtTime(0.001, now + 0.15);
+      gain.gain.setValueAtTime(0.25, now + 0.22);
+      gain.gain.setValueAtTime(0.001, now + 0.37);
+      gain.gain.setValueAtTime(0.3, now + 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 1.65);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
+  private synthApplause(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const dur = 2.4;
+    const bufferSize = this.ctx.sampleRate * dur;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.Q.value = 1.0;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.linearRampToValueAtTime(0.45, now + 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    return () => {
+      try { noise.stop(); noise.disconnect(); } catch {}
+    };
+  }
+
+  private synthCheer(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const dur = 2.8;
+    const bufferSize = this.ctx.sampleRate * dur;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.frequency.linearRampToValueAtTime(1200, now + 1.2);
+    filter.Q.value = 1.2;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.5, now + 0.4);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    // Whistle
+    const whistle = this.ctx.createOscillator();
+    const whistleGain = this.ctx.createGain();
+    whistle.type = 'sine';
+    whistle.frequency.setValueAtTime(1800, now + 0.2);
+    whistle.frequency.exponentialRampToValueAtTime(2600, now + 0.7);
+    whistle.frequency.exponentialRampToValueAtTime(1600, now + 1.1);
+    whistleGain.gain.setValueAtTime(0.12, now + 0.2);
+    whistleGain.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+    whistle.connect(whistleGain);
+    whistleGain.connect(dest);
+    whistle.start(now + 0.2);
+    whistle.stop(now + 1.15);
+
+    return () => {
+      try { noise.stop(); noise.disconnect(); } catch {}
+      try { whistle.stop(); whistle.disconnect(); } catch {}
+    };
+  }
+
+  private synthLaugh(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const laughNotes = [330, 310, 360, 320, 340, 290, 260];
+    const oscs: OscillatorNode[] = [];
+    laughNotes.forEach((f, idx) => {
+      const noteTime = now + idx * 0.16;
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, noteTime);
+      osc.frequency.exponentialRampToValueAtTime(f - 50, noteTime + 0.13);
+
+      gain.gain.setValueAtTime(0.35, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.14);
+
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(noteTime);
+      osc.stop(noteTime + 0.15);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
+  private synthRimshot(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    // Ba-dum
+    const hit1 = this.ctx.createOscillator();
+    const g1 = this.ctx.createGain();
+    hit1.frequency.setValueAtTime(160, now);
+    hit1.frequency.exponentialRampToValueAtTime(60, now + 0.1);
+    g1.gain.setValueAtTime(0.5, now);
+    g1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    hit1.connect(g1);
+    g1.connect(dest);
+    hit1.start(now);
+    hit1.stop(now + 0.13);
+
+    const hit2 = this.ctx.createOscillator();
+    const g2 = this.ctx.createGain();
+    hit2.frequency.setValueAtTime(140, now + 0.18);
+    hit2.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+    g2.gain.setValueAtTime(0.55, now + 0.18);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    hit2.connect(g2);
+    g2.connect(dest);
+    hit2.start(now + 0.18);
+    hit2.stop(now + 0.33);
+
+    // Tssss! (Cymbal crash)
+    const dur = 1.0;
+    const bufferSize = this.ctx.sampleRate * dur;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 5000;
+
+    const gCymbal = this.ctx.createGain();
+    gCymbal.gain.setValueAtTime(0.4, now + 0.36);
+    gCymbal.gain.exponentialRampToValueAtTime(0.001, now + 0.36 + dur);
+
+    noise.connect(filter);
+    filter.connect(gCymbal);
+    gCymbal.connect(dest);
+    noise.start(now + 0.36);
+    noise.stop(now + 0.36 + dur);
+
+    return () => {
+      try { hit1.stop(); hit1.disconnect(); } catch {}
+      try { hit2.stop(); hit2.disconnect(); } catch {}
+      try { noise.stop(); noise.disconnect(); } catch {}
+    };
+  }
+
+  private synthSadTrombone(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    // Wah wah wah waaaah
+    const notes = [293.66, 277.18, 261.63, 246.94]; // D4, C#4, C4, B3
+    const oscs: OscillatorNode[] = [];
+    notes.forEach((f, idx) => {
+      const isLast = idx === 3;
+      const noteTime = now + idx * 0.35;
+      const noteDur = isLast ? 1.0 : 0.3;
+
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, noteTime);
+      if (isLast) {
+        osc.frequency.linearRampToValueAtTime(f - 30, noteTime + noteDur);
+      }
+
+      const filter = this.ctx!.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(700, noteTime);
+      filter.frequency.linearRampToValueAtTime(350, noteTime + noteDur);
+
+      gain.gain.setValueAtTime(0.3, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + noteDur);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(dest);
+      osc.start(noteTime);
+      osc.stop(noteTime + noteDur + 0.05);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
+  private synthBell(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const bellFreqs = [1046.5, 2093.0, 3135.96]; // C6 harmonics
+    const oscs: OscillatorNode[] = [];
+    bellFreqs.forEach((f, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, now);
+      gain.gain.setValueAtTime(0.2 / (idx + 1), now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 1.25);
+      oscs.push(osc);
+    });
+    return () => {
+      oscs.forEach((o) => {
+        try { o.stop(); o.disconnect(); } catch {}
+      });
+    };
+  }
+
+  private synthLaser(now: number, dest: AudioNode): () => void {
+    if (!this.ctx) return () => {};
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(2400, now);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.25);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.28);
+    return () => {
+      try { osc.stop(); osc.disconnect(); } catch {}
+    };
   }
 
   // --- Real Audio Recording (Master Bus Capture) ---

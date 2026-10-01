@@ -57,14 +57,14 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({ isLive }) => {
       ctx.setLineDash([]);
 
       // 1. Draw Master Output Waveform (Magenta subtle background)
-      ctx.strokeStyle = 'rgba(217, 70, 239, 0.45)';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(217, 70, 239, 0.6)';
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
       ctx.moveTo(0, midY);
 
       for (let i = 0; i < masterBuffer.length; i++) {
         const x = (i / (masterBuffer.length - 1)) * width;
-        const val = isLive ? masterBuffer[i] : 0;
+        const val = masterBuffer[i];
         const y = midY - val * (height * 0.42);
         ctx.lineTo(x, y);
       }

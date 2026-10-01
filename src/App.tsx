@@ -9,6 +9,7 @@ import { SfxSection } from './components/SfxSection';
 import { RecordingSection } from './components/RecordingSection';
 import { Popups } from './components/Popups';
 import { ProjectCodeViewer } from './components/ProjectCodeViewer';
+import { VstSettingsModal } from './components/VstSettingsModal';
 import { audioEngineInstance, DEFAULT_EQ_FREQS } from './services/webAudioEngine';
 import {
   BandSetting,
@@ -26,6 +27,7 @@ export default function App() {
   const [isLive, setIsLive] = useState(false);
   const [activePopup, setActivePopup] = useState<string | null>(null);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
+  const [isVstSettingsOpen, setIsVstSettingsOpen] = useState(false);
 
   // Volumes
   const [micVolume, setMicVolume] = useState(1.0);
@@ -260,19 +262,33 @@ export default function App() {
   };
 
   const handleAddVstClick = () => {
-    const name = prompt('Nhập tên Plugin VST3 muốn chèn (Ví dụ: iZotope Nectar, Valhalla Reverb, Melodyne):', 'Waves Tune Real-Time (VST3)');
-    if (name) {
-      const newSlot: VstPluginSlot = {
-        id: `vst-${Date.now()}`,
-        name: name,
-        path: `C:\\Program Files\\Common Files\\VST3\\${name.replace(/[^a-zA-Z0-9]/g, '')}.vst3`,
-        enabled: true,
-        bypassed: false,
-        editorOpen: false,
-        type: 'Plugin Insert',
-      };
-      setVstSlots((prev) => [...prev, newSlot]);
-    }
+    setIsVstSettingsOpen(true);
+  };
+
+  const handleInsertPluginFromScanner = (plugin: { name: string; path: string; category: string }) => {
+    const newSlot: VstPluginSlot = {
+      id: `vst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: plugin.name,
+      path: plugin.path,
+      enabled: true,
+      bypassed: false,
+      editorOpen: false,
+      type: plugin.category,
+    };
+    setVstSlots((prev) => [...prev, newSlot]);
+  };
+
+  const handleAddCustomPlugin = (name: string, path: string) => {
+    const newSlot: VstPluginSlot = {
+      id: `vst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      path,
+      enabled: true,
+      bypassed: false,
+      editorOpen: false,
+      type: 'VST3 Insert',
+    };
+    setVstSlots((prev) => [...prev, newSlot]);
   };
 
   // Project Save & Load
@@ -363,6 +379,7 @@ export default function App() {
         onSaveProject={handleSaveProject}
         onOpenProject={handleOpenProject}
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
+        onOpenVstSettings={() => setIsVstSettingsOpen(true)}
         currentKey={`${autoKey.currentKey} ${autoKey.isMajor ? 'Maj' : 'Min'}`}
       />
 
@@ -414,6 +431,7 @@ export default function App() {
           onRemoveVst={handleRemoveVst}
           onOpenVstEditor={handleOpenVstEditor}
           onAddVstClick={handleAddVstClick}
+          onOpenVstSettings={() => setIsVstSettingsOpen(true)}
         />
 
         {/* Music Player Beat Section */}
@@ -475,6 +493,14 @@ export default function App() {
         onMoveVstDown={handleMoveVstDown}
         onRemoveVst={handleRemoveVst}
         onAddVstClick={handleAddVstClick}
+      />
+
+      <VstSettingsModal
+        isOpen={isVstSettingsOpen}
+        onClose={() => setIsVstSettingsOpen(false)}
+        activeRackSlots={vstSlots}
+        onInsertPluginToRack={handleInsertPluginFromScanner}
+        onAddCustomPlugin={handleAddCustomPlugin}
       />
 
       <ProjectCodeViewer

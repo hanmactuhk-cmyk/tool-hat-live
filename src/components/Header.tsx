@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Mic,
   Sliders,
@@ -8,8 +8,9 @@ import {
   HelpCircle,
   Download,
   Github,
-  CheckCircle,
+  Settings,
 } from 'lucide-react';
+import { generateAndDownloadProjectZip } from '../utils/projectZipBuilder';
 
 interface HeaderProps {
   isLive: boolean;
@@ -19,6 +20,7 @@ interface HeaderProps {
   onSaveProject: () => void;
   onOpenProject: () => void;
   onOpenCodeViewer: () => void;
+  onOpenVstSettings: () => void;
   currentKey: string;
 }
 
@@ -30,8 +32,28 @@ export const Header: React.FC<HeaderProps> = ({
   onSaveProject,
   onOpenProject,
   onOpenCodeViewer,
+  onOpenVstSettings,
   currentKey,
 }) => {
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadZip = async () => {
+    try {
+      setIsDownloading(true);
+      await generateAndDownloadProjectZip();
+    } catch {
+      // Fallback to direct anchor if any issue
+      const a = document.createElement('a');
+      a.href = '/HNStudio-Musik-AI.zip';
+      a.download = 'HNStudio-Musik-AI.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <header className="bg-[#0e1422] border-b border-[#1e293b] px-4 py-3 shadow-xl">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
@@ -98,6 +120,15 @@ export const Header: React.FC<HeaderProps> = ({
             <span>KEY: {currentKey}</span>
           </button>
 
+          {/* VST SETTINGS & SCAN BUTTON */}
+          <button
+            onClick={onOpenVstSettings}
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-[#161f30] text-[#a855f7] border border-[#a855f7]/40 hover:bg-[#a855f7]/15 transition-colors flex items-center space-x-1.5 cursor-pointer"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>CÀI ĐẶT VST</span>
+          </button>
+
           {/* PROJECT ACTIONS */}
           <div className="flex items-center space-x-1 bg-[#121824] p-1 rounded-lg border border-[#25334e]">
             <button
@@ -125,7 +156,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* GITHUB ACTIONS & CODE INSPECTOR */}
+          {/* GITHUB ACTIONS */}
           <button
             onClick={onOpenCodeViewer}
             className="px-3 py-2 rounded-lg text-xs font-semibold bg-[#161f30] text-[#38bdf8] border border-[#38bdf8]/40 hover:bg-[#38bdf8]/10 transition-colors flex items-center space-x-1.5 cursor-pointer"
@@ -143,15 +174,15 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">HƯỚNG DẪN</span>
           </button>
 
-          {/* ZIP DOWNLOAD BUTTON */}
-          <a
-            href="/HNStudio-Musik-AI.zip"
-            download="HNStudio-Musik-AI.zip"
-            className="px-3 py-2 rounded-lg text-xs font-bold bg-gradient-to-r from-[#00f0ff] to-[#a855f7] text-[#0a0d14] hover:shadow-[0_0_20px_rgba(0,240,255,0.6)] transition-all flex items-center space-x-1.5 cursor-pointer"
+          {/* SAFE ZIP DOWNLOAD BUTTON (IN-MEMORY JSZIP + VALID BLOB) */}
+          <button
+            onClick={handleDownloadZip}
+            disabled={isDownloading}
+            className="px-3.5 py-2 rounded-lg text-xs font-black bg-gradient-to-r from-[#00f0ff] to-[#a855f7] text-[#0a0d14] hover:shadow-[0_0_20px_rgba(0,240,255,0.6)] transition-all flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>TẢI PROJECT (.ZIP)</span>
-          </a>
+            <Download className={`w-3.5 h-3.5 ${isDownloading ? 'animate-bounce' : ''}`} />
+            <span>{isDownloading ? 'ĐANG TẠO ZIP...' : 'TẢI ZIP DỰ ÁN'}</span>
+          </button>
         </div>
       </div>
     </header>
