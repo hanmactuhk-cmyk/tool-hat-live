@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "main": "electron/main.cjs",
   "type": "module",
+  "overrides": {
+    "baseline-browser-mapping": "2.11.26"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
