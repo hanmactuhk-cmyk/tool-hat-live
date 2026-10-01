@@ -17,10 +17,10 @@ public:
             mainWindow = std::make_unique<MainWindow>(getApplicationName());
         }
         catch (const std::exception& e) {
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", e.what());
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", juce::String(e.what()));
         }
         catch (...) {
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", "Khởi động giao diện thất bại.");
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", "Khởi động giao diện thất bại.");
         }
     }
 
