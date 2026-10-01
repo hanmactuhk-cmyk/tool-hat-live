@@ -76,15 +76,18 @@ export class WebAudioEngine {
   // Noise gate state
   private gateParams: NoiseGateParams = {
     enabled: true,
-    threshold: -45,
+    threshold: -52,
     attack: 5,
-    release: 120,
+    release: 140,
     range: -60,
   };
   private gateGainNode: GainNode | null = null;
   private gateIntervalId: number | null = null;
+  private gateIsOpen = false;
+  private gateLastOpenTime = 0;
 
-  // Meters
+  // Meters & Sidechain
+  private rawMicAnalyser: AnalyserNode | null = null;
   private isLive = false;
   private isClipping = false;
 
@@ -162,9 +165,15 @@ export class WebAudioEngine {
     this.micGain = this.ctx.createGain();
     this.micGain.gain.value = 1.0;
 
+    // Post-DSP Mic Visual Analyser
     this.micAnalyser = this.ctx.createAnalyser();
     this.micAnalyser.fftSize = 1024;
     this.micAnalyser.smoothingTimeConstant = 0.2;
+
+    // Pre-DSP Raw Mic Sidechain Analyser (Chống phản hồi lặp & triệt tiêu 100% tiếng nổ giật)
+    this.rawMicAnalyser = this.ctx.createAnalyser();
+    this.rawMicAnalyser.fftSize = 512;
+    this.rawMicAnalyser.smoothingTimeConstant = 0.05;
 
     this.setupDspChain();
     this.startNoiseGateProcessor();
@@ -348,6 +357,9 @@ export class WebAudioEngine {
       }
 
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
+      if (this.rawMicAnalyser) {
+        this.micSource.connect(this.rawMicAnalyser);
+      }
       this.micSource.connect(this.gateGainNode);
       this.isLive = true;
       return true;
@@ -571,28 +583,43 @@ export class WebAudioEngine {
     };
   }
 
-  // --- Real Noise Gate Execution (Smooth Exponential Automation - Triệt tiêu 100% tiếng nổ giật máy cày) ---
+  // --- Professional Noise Gate Execution (Schmitt Trigger Hysteresis & 180ms Hold Time) ---
   private startNoiseGateProcessor() {
     if (this.gateIntervalId) clearInterval(this.gateIntervalId);
 
-    const data = new Uint8Array(256);
+    const data = new Float32Array(256);
     this.gateIntervalId = window.setInterval(() => {
-      if (!this.gateParams.enabled || !this.gateGainNode || !this.micAnalyser || !this.ctx) return;
+      if (!this.gateGainNode || !this.ctx) return;
 
-      this.micAnalyser.getByteTimeDomainData(data);
+      // If gate disabled or no raw mic input, keep gate wide open with unity gain
+      if (!this.gateParams.enabled || !this.rawMicAnalyser) {
+        this.gateGainNode.gain.setTargetAtTime(1.0, this.ctx.currentTime, 0.05);
+        return;
+      }
+
+      this.rawMicAnalyser.getFloatTimeDomainData(data);
       let sum = 0;
       for (let i = 0; i < data.length; i++) {
-        const val = (data[i] - 128) / 128;
-        sum += val * val;
+        sum += data[i] * data[i];
       }
       const rms = Math.sqrt(sum / data.length);
-      const db = rms > 1e-4 ? 20 * Math.log10(rms) : -100;
+      const db = rms > 1e-5 ? 20 * Math.log10(rms) : -100;
 
-      const isOpen = db >= this.gateParams.threshold;
-      const targetGain = isOpen ? 1.0 : Math.pow(10, this.gateParams.range / 20);
+      const openThreshold = this.gateParams.threshold; // e.g. -52 dB
+      const closeThreshold = openThreshold - 6; // e.g. -58 dB (6dB Hysteresis eliminates chattering)
+      const now = performance.now();
 
-      // Fast musical attack (10ms), smooth musical decay release (60ms) using AudioParam interpolation
-      const timeConstant = isOpen ? 0.012 : 0.065;
+      if (db >= openThreshold) {
+        this.gateIsOpen = true;
+        this.gateLastOpenTime = now;
+      } else if (db < closeThreshold && now - this.gateLastOpenTime > 180) {
+        // 180ms Hold time prevents choppy speech & rain-like sputtering
+        this.gateIsOpen = false;
+      }
+
+      const targetGain = this.gateIsOpen ? 1.0 : Math.pow(10, this.gateParams.range / 20);
+      const timeConstant = this.gateIsOpen ? 0.01 : 0.12; // Musical attack & release
+
       try {
         this.gateGainNode.gain.setTargetAtTime(targetGain, this.ctx.currentTime, timeConstant);
       } catch {
