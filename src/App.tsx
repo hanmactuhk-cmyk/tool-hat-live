@@ -12,6 +12,7 @@ import { Popups } from './components/Popups';
 import { ProjectCodeViewer } from './components/ProjectCodeViewer';
 import { VstSettingsModal } from './components/VstSettingsModal';
 import { AudioSettingsModal } from './components/AudioSettingsModal';
+import { AsioMatrixModal } from './components/AsioMatrixModal';
 import { audioEngineInstance, DEFAULT_EQ_FREQS } from './services/webAudioEngine';
 import { Sparkles, Shield, Headphones, Check, Zap, AlertCircle } from 'lucide-react';
 import {
@@ -35,6 +36,7 @@ export default function App() {
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isVstSettingsOpen, setIsVstSettingsOpen] = useState(false);
   const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
+  const [isAsioModalOpen, setIsAsioModalOpen] = useState(false);
 
   // Anti-Feedback Suppressor state (Default ON to prevent mic howling)
   const [isAntiFeedback, setIsAntiFeedback] = useState(true);
@@ -473,7 +475,7 @@ export default function App() {
         onToggleLive={handleToggleLive}
         onOpenPopup={(id) => {
           if (id === 'audio_io') {
-            setIsAudioSettingsOpen(true);
+            setIsAsioModalOpen(true);
           } else {
             setActivePopup(id);
           }
@@ -674,6 +676,11 @@ export default function App() {
       <AudioSettingsModal
         isOpen={isAudioSettingsOpen}
         onClose={() => setIsAudioSettingsOpen(false)}
+      />
+
+      <AsioMatrixModal
+        isOpen={isAsioModalOpen}
+        onClose={() => setIsAsioModalOpen(false)}
       />
 
       {/* AI AUTO-DSP SCANNING MODAL */}
