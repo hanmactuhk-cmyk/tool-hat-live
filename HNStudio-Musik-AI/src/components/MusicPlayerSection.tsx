@@ -18,6 +18,8 @@ import {
   EyeOff,
   Sparkles,
   Scaling,
+  Radio,
+  HelpCircle,
 } from 'lucide-react';
 import { audioEngineInstance } from '../services/webAudioEngine';
 import { YouTubePipModal } from './YouTubePipModal';
@@ -85,6 +87,7 @@ export const MusicPlayerSection: React.FC<MusicPlayerSectionProps> = ({
   const [activeYoutubeVideoId, setActiveYoutubeVideoId] = useState<string>('9_gYF_hFk4M');
   const [videoSize, setVideoSize] = useState<'compact' | 'medium' | 'hidden'>('compact');
   const [isPipModalOpen, setIsPipModalOpen] = useState(false);
+  const [isSystemAudioCapturing, setIsSystemAudioCapturing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Latency measurement
@@ -103,9 +106,20 @@ export const MusicPlayerSection: React.FC<MusicPlayerSectionProps> = ({
         setActiveBeatType(audioEngineInstance.getDemoBeatType());
       }
       setLatencyMs(audioEngineInstance.getLatencyMs());
+      setIsSystemAudioCapturing(audioEngineInstance.isSystemAudioCaptured());
     }, 200);
     return () => clearInterval(interval);
   }, []);
+
+  const handleToggleSystemAudio = async () => {
+    if (isSystemAudioCapturing) {
+      audioEngineInstance.stopSystemAudioCapture();
+      setIsSystemAudioCapturing(false);
+    } else {
+      const ok = await audioEngineInstance.startSystemAudioCapture();
+      setIsSystemAudioCapturing(ok);
+    }
+  };
 
   const extractYoutubeVideoId = (input: string): string => {
     if (!input) return '';
@@ -357,6 +371,60 @@ export const MusicPlayerSection: React.FC<MusicPlayerSectionProps> = ({
                 <span>{preset.title.split('-')[0]}</span>
               </button>
             ))}
+          </div>
+
+          {/* System & YouTube Audio Loopback Capture Banner (ĐƯA ÂM THANH YOUTUBE VÀO MIXER & THU ÂM) */}
+          <div
+            className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2.5 transition-all ${
+              isSystemAudioCapturing
+                ? 'bg-[#00ff88]/10 border-[#00ff88]/60 shadow-[0_0_20px_rgba(0,255,136,0.25)]'
+                : 'bg-[#141b2a] border-[#00f0ff]/40 shadow-[0_0_12px_rgba(0,240,255,0.1)]'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5">
+              <div className="relative">
+                <Radio
+                  className={`w-5 h-5 ${
+                    isSystemAudioCapturing ? 'text-[#00ff88] animate-pulse' : 'text-[#00f0ff]'
+                  }`}
+                />
+                {isSystemAudioCapturing && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00ff88] animate-ping" />
+                )}
+              </div>
+              <div>
+                <div className="text-xs font-bold text-white flex items-center space-x-2">
+                  <span>THU ÂM THANH YOUTUBE / HỆ THỐNG VÀO MIXER (LOOPBACK)</span>
+                  {isSystemAudioCapturing ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/40 font-bold flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse mr-1"></span>
+                      ĐANG KẾT NỐI (SÓNG NHẠC ĐANG NHẢY)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f59e0b]/20 text-[#f59e0b] border border-[#f59e0b]/40 font-bold">
+                      CẦN BẬT ĐỂ SÓNG NHẠC NHẢY & THU ÂM
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-[#94a3b8] mt-0.5">
+                  {isSystemAudioCapturing
+                    ? '✓ Tiếng nhạc từ YouTube / Máy tính đang chạy thẳng vào Fader BEAT & Bộ thu âm! Sóng nhạc đang dao động theo beat.'
+                    : '💡 Bấm nút bên phải, chọn "Tab này / Toàn màn hình" và TÍCH CHỌN "Chia sẻ âm thanh" (Share audio) để đưa nhạc YouTube vào bàn Mixer!'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleToggleSystemAudio}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 transition-all cursor-pointer ${
+                isSystemAudioCapturing
+                  ? 'bg-[#ff3366] hover:bg-[#cc2952] text-white shadow-[0_0_12px_rgba(255,51,102,0.4)]'
+                  : 'bg-gradient-to-r from-[#00f0ff] to-[#00ff88] hover:opacity-90 text-black shadow-[0_0_15px_rgba(0,240,255,0.4)]'
+              }`}
+            >
+              <Radio className="w-4 h-4" />
+              <span>{isSystemAudioCapturing ? 'TẮT THU HỆ THỐNG' : '⚡ BẬT THU ÂM THANH YOUTUBE'}</span>
+            </button>
           </div>
 
           {/* Interactive YouTube Embed Window (With Lyrics Display) */}

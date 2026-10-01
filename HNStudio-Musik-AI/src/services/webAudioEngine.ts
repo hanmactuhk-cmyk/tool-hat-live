@@ -58,9 +58,14 @@ export class WebAudioEngine {
   private activeDeviceId: string = '';
   private activeDeviceName: string = 'Đang nhận diện Soundcard...';
 
-  // Music Player
+  // Music Player & System Audio Loopback
   private musicAudioElement: HTMLAudioElement | null = null;
   private musicSourceNode: MediaElementAudioSourceNode | null = null;
+  private systemAudioStream: MediaStream | null = null;
+  private systemAudioSource: MediaStreamAudioSourceNode | null = null;
+  private isSystemAudioActive = false;
+  private stereoMixStream: MediaStream | null = null;
+  private stereoMixSource: MediaStreamAudioSourceNode | null = null;
 
   // Recorder
   private mediaRecorder: MediaRecorder | null = null;
@@ -108,10 +113,9 @@ export class WebAudioEngine {
     if (!this.ctx) {
       const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       try {
-        // Ultra Low Latency configuration (2ms - 5ms hardware buffer)
+        // Use native hardware sample rate and interactive low latency buffer (prevents buffer underrun tractor popping)
         this.ctx = new AudioCtxClass({
           latencyHint: 'interactive',
-          sampleRate: 48000,
         });
       } catch {
         this.ctx = new AudioCtxClass();
@@ -130,12 +134,12 @@ export class WebAudioEngine {
     this.masterAnalyser.fftSize = 1024;
     this.masterAnalyser.smoothingTimeConstant = 0.2;
 
-    // Master Limiter
+    // Master Limiter (Chống vỡ tiếng)
     this.limiterNode = this.ctx.createDynamicsCompressor();
     this.limiterNode.threshold.value = -0.5;
     this.limiterNode.knee.value = 0.0;
     this.limiterNode.ratio.value = 20.0;
-    this.limiterNode.attack.value = 0.001;
+    this.limiterNode.attack.value = 0.002;
     this.limiterNode.release.value = 0.05;
 
     // Connect Master bus -> Limiter -> Analyser -> Destination
@@ -170,6 +174,12 @@ export class WebAudioEngine {
 
   private setupDspChain() {
     if (!this.ctx || !this.micGain || !this.masterGain) return;
+
+    // 0. DC-Blocker & Sub-rumble Filter (Triệt tiêu xung điện DC & tiếng nổ tần số thấp)
+    const dcBlocker = this.ctx.createBiquadFilter();
+    dcBlocker.type = 'highpass';
+    dcBlocker.frequency.value = 35;
+    dcBlocker.Q.value = 0.707;
 
     // 1. Gate Gain Node
     this.gateGainNode = this.ctx.createGain();
@@ -234,29 +244,37 @@ export class WebAudioEngine {
     this.longReverbWetGain = this.ctx.createGain();
     this.longReverbWetGain.gain.value = 0.22;
 
-    // 7. Echo / Stereo Tape Delay
+    // 7. Echo / Stereo Tape Delay (With DC Highpass Protection)
     this.echoDelayNode = this.ctx.createDelay(2.0);
-    this.echoDelayNode.delayTime.value = 0.24; // 240ms delay time (Chuẩn nhạc trẻ / bolero)
+    this.echoDelayNode.delayTime.value = 0.24; // 240ms delay time
     this.echoFeedbackGain = this.ctx.createGain();
     this.echoFeedbackGain.gain.value = 0.38; // 38% feedback repeats
+
+    const echoDcFilter = this.ctx.createBiquadFilter();
+    echoDcFilter.type = 'highpass';
+    echoDcFilter.frequency.value = 120; // Block DC in delay loop
+
     this.echoFilterNode = this.ctx.createBiquadFilter();
     this.echoFilterNode.type = 'lowpass';
     this.echoFilterNode.frequency.value = 3500; // Warm analog tape roll-off
     this.echoWetGain = this.ctx.createGain();
     this.echoWetGain.gain.value = 0.26;
 
-    // Delay Feedback Loop: Delay -> Filter -> FeedbackGain -> Delay
+    // Safe Delay Feedback Loop: Delay -> LowPass -> HighPass -> FeedbackGain -> Delay
     this.echoDelayNode.connect(this.echoFilterNode);
-    this.echoFilterNode.connect(this.echoFeedbackGain);
+    this.echoFilterNode.connect(echoDcFilter);
+    echoDcFilter.connect(this.echoFeedbackGain);
     this.echoFeedbackGain.connect(this.echoDelayNode);
-    this.echoFilterNode.connect(this.echoWetGain);
+    echoDcFilter.connect(this.echoWetGain);
 
     // Dry Gain
     this.reverbDryGain = this.ctx.createGain();
     this.reverbDryGain.gain.value = 1.0;
 
-    // Connect Anti-Feedback chain in series: Gate -> LowCut -> Notch1 -> Notch2 -> Notch3 -> Notch4 -> Comp
-    this.gateGainNode.connect(this.antiFeedbackHighPass);
+    // Connect Chain: Gate -> DCBlocker -> Anti-Feedback LowCut -> Notches -> Comp
+    this.gateGainNode.connect(dcBlocker);
+    dcBlocker.connect(this.antiFeedbackHighPass);
+
     let prevNode: AudioNode = this.antiFeedbackHighPass;
     this.antiFeedbackFilters.forEach((notch) => {
       prevNode.connect(notch);
@@ -305,16 +323,13 @@ export class WebAudioEngine {
 
       const targetDeviceId = deviceId || this.activeDeviceId || undefined;
 
-      // Ultra-low latency constraints: disable all DSP bloat in browser/OS layer
+      // Studio quality clean audio capture (no Windows driver buffer underrun crackles)
       const audioConstraints: Record<string, unknown> = {
         deviceId: targetDeviceId ? { exact: targetDeviceId } : undefined,
         echoCancellation: false,
         autoGainControl: false,
         noiseSuppression: false,
         channelCount: { ideal: 2, min: 1 },
-        sampleRate: { ideal: 48000 },
-        sampleSize: { ideal: 24, min: 16 },
-        latency: { ideal: 0.001, max: 0.003 },
         googEchoCancellation: false,
         googAutoGainControl: false,
         googNoiseSuppression: false,
@@ -556,13 +571,13 @@ export class WebAudioEngine {
     };
   }
 
-  // --- Real Noise Gate Execution ---
+  // --- Real Noise Gate Execution (Smooth Exponential Automation - Triệt tiêu 100% tiếng nổ giật máy cày) ---
   private startNoiseGateProcessor() {
     if (this.gateIntervalId) clearInterval(this.gateIntervalId);
 
     const data = new Uint8Array(256);
     this.gateIntervalId = window.setInterval(() => {
-      if (!this.gateParams.enabled || !this.gateGainNode || !this.micAnalyser) return;
+      if (!this.gateParams.enabled || !this.gateGainNode || !this.micAnalyser || !this.ctx) return;
 
       this.micAnalyser.getByteTimeDomainData(data);
       let sum = 0;
@@ -573,10 +588,16 @@ export class WebAudioEngine {
       const rms = Math.sqrt(sum / data.length);
       const db = rms > 1e-4 ? 20 * Math.log10(rms) : -100;
 
-      const targetGain = db >= this.gateParams.threshold ? 1.0 : Math.pow(10, this.gateParams.range / 20);
-      const current = this.gateGainNode.gain.value;
-      const step = targetGain > current ? 0.2 : 0.05;
-      this.gateGainNode.gain.value = current + (targetGain - current) * step;
+      const isOpen = db >= this.gateParams.threshold;
+      const targetGain = isOpen ? 1.0 : Math.pow(10, this.gateParams.range / 20);
+
+      // Fast musical attack (10ms), smooth musical decay release (60ms) using AudioParam interpolation
+      const timeConstant = isOpen ? 0.012 : 0.065;
+      try {
+        this.gateGainNode.gain.setTargetAtTime(targetGain, this.ctx.currentTime, timeConstant);
+      } catch {
+        this.gateGainNode.gain.value = targetGain;
+      }
     }, 25);
   }
 
@@ -869,6 +890,98 @@ export class WebAudioEngine {
     if (this.musicAudioElement) {
       this.musicAudioElement.pause();
       this.musicAudioElement.currentTime = 0;
+    }
+  }
+
+  // --- Desktop / YouTube System Audio Capture (Loopback Mixer) ---
+  public async startSystemAudioCapture(): Promise<boolean> {
+    try {
+      await this.ensureAudioContext();
+      if (!this.ctx || !this.musicGain) return false;
+
+      // Stop previous stream if active
+      this.stopSystemAudioCapture();
+
+      // Capture desktop/tab audio (YouTube, Chrome tab, media player, Windows sound)
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true, // required by browser getDisplayMedia API
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        } as MediaTrackConstraints,
+      });
+
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        // User didn't check "Share audio / Chia sẻ âm thanh"
+        stream.getTracks().forEach((t) => t.stop());
+        return false;
+      }
+
+      this.systemAudioStream = stream;
+      this.systemAudioSource = this.ctx.createMediaStreamSource(stream);
+      // Route YouTube / System Audio directly into the Music Gain Bus!
+      this.systemAudioSource.connect(this.musicGain);
+      this.isSystemAudioActive = true;
+
+      // When user stops sharing tab/window from browser bar
+      audioTracks[0].onended = () => {
+        this.stopSystemAudioCapture();
+      };
+
+      return true;
+    } catch (err) {
+      console.warn('System audio capture cancelled or not supported:', err);
+      this.isSystemAudioActive = false;
+      return false;
+    }
+  }
+
+  public stopSystemAudioCapture() {
+    if (this.systemAudioStream) {
+      this.systemAudioStream.getTracks().forEach((t) => t.stop());
+      this.systemAudioStream = null;
+    }
+    if (this.systemAudioSource) {
+      this.systemAudioSource.disconnect();
+      this.systemAudioSource = null;
+    }
+    this.isSystemAudioActive = false;
+  }
+
+  public isSystemAudioCaptured(): boolean {
+    return this.isSystemAudioActive;
+  }
+
+  // --- Soundcard Stereo Mix / Virtual Cable Capture ---
+  public async startStereoMixInput(deviceId: string): Promise<boolean> {
+    try {
+      await this.ensureAudioContext();
+      if (!this.ctx || !this.musicGain) return false;
+
+      if (this.stereoMixStream) {
+        this.stereoMixStream.getTracks().forEach((t) => t.stop());
+      }
+      if (this.stereoMixSource) {
+        this.stereoMixSource.disconnect();
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: deviceId },
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
+      this.stereoMixStream = stream;
+      this.stereoMixSource = this.ctx.createMediaStreamSource(stream);
+      this.stereoMixSource.connect(this.musicGain);
+      return true;
+    } catch {
+      return false;
     }
   }
 
