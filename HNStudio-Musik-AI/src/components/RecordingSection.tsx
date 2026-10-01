@@ -8,9 +8,12 @@ export const RecordingSection: React.FC = () => {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (audioEngineInstance.getIsRecording()) {
+      if (audioEngineInstance.isCurrentlyRecording()) {
         setIsRecording(true);
-        setDuration(audioEngineInstance.getRecordDuration());
+        const sec = audioEngineInstance.getRecordDuration();
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        setDuration(`${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
       } else {
         setIsRecording(false);
       }

@@ -5,7 +5,7 @@ import { ChannelStrips } from './components/ChannelStrip';
 import { DspToolbar } from './components/DspToolbar';
 import { ExternalVstBar } from './components/ExternalVstBar';
 import { VstPanel } from './components/VstPanel';
-import { MusicPlayerSection } from './components/MusicPlayerSection';
+import { ExternalAudioSection } from './components/ExternalAudioSection';
 import { SfxSection } from './components/SfxSection';
 import { RecordingSection } from './components/RecordingSection';
 import { Popups } from './components/Popups';
@@ -539,11 +539,11 @@ export default function App() {
           currentKey={`${autoKey.currentKey} ${autoKey.isMajor ? 'Maj' : 'Min'}`}
         />
 
-        {/* ROW 3: Tab Selector for Bottom Area (To fit everything in 100vh) */}
+        {/* ROW 3: External Music & Beat Input Manager */}
         <div className="flex-1 flex flex-col justify-between gap-1.5 overflow-hidden">
-          {/* Main Area: YouTube Karaoke & Music Player */}
+          {/* Main Area: External Audio Beat & Loopback Ingest */}
           <div className="flex-1 overflow-y-auto">
-            <MusicPlayerSection
+            <ExternalAudioSection
               musicVolume={musicVolume}
               onMusicVolumeChange={handleMusicVolumeChange}
             />
