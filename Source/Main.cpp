@@ -9,7 +9,7 @@ public:
 
     const juce::String getApplicationName() override       { return "HNStudio Musik AI"; }
     const juce::String getApplicationVersion() override    { return "1.0.0"; }
-    bool moreThanOneInstanceAllowed() override             { return false; }
+    bool moreThanOneInstanceAllowed() override             { return true; }
 
     void initialise(const juce::String& /*commandLine*/) override
     {
