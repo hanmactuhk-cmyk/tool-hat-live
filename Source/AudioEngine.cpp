@@ -18,17 +18,25 @@ bool AudioEngine::initAudioDevice()
         juce::AudioDeviceManager::AudioDeviceSetup setup;
         deviceManager.getAudioDeviceSetup(setup);
         
-        juce::String err = deviceManager.initialiseWithDefaultDevices(2, 2);
-        if (err.isNotEmpty())
+        // Check if VB-CABLE is available
+        bool cableAvailable = isVirtualDriverInstalled();
+        if (cableAvailable)
         {
-            // If failed (e.g. mic permission disabled in Windows or no input plugged in), fallback to output only
-            err = deviceManager.initialiseWithDefaultDevices(0, 2);
+            setup.inputDeviceName = "CABLE Output";
+            setup.outputDeviceName = setup.outputDeviceName.isNotEmpty() ? setup.outputDeviceName : deviceManager.getDefaultAudioDeviceName(false);
+            setup.sampleRate = 44100.0;
+            setup.bufferSize = 512;
+            
+            juce::String err = deviceManager.setAudioDeviceSetup(setup, true);
+            if (err.isNotEmpty())
+            {
+                deviceManager.initialiseWithDefaultDevices(2, 2);
+            }
         }
-
-        if (err.isNotEmpty())
+        else
         {
-            lastDeviceError = "Khởi tạo thiết bị âm thanh thất bại: " + err;
-            return false;
+            deviceManager.initialiseWithDefaultDevices(2, 2);
+            lastDeviceError = "VB-CABLE NOT INSTALLED: Vui lòng cài đặt VB-Audio VB-CABLE để sử dụng tính năng định tuyến System Audio!";
         }
 
         deviceManager.addAudioCallback(this);
@@ -41,8 +49,78 @@ bool AudioEngine::initAudioDevice()
 
 void AudioEngine::closeAudioDevice()
 {
+    setLiveEnabled(false);
     deviceManager.removeAudioCallback(this);
     deviceManager.closeAudioDevice();
+}
+
+void AudioEngine::setLiveEnabled(bool enabled)
+{
+    bool prev = isLiveOn.exchange(enabled);
+    if (prev != enabled)
+    {
+        saveAndRedirectWindowsDefaultAudio(enabled);
+    }
+}
+
+bool AudioEngine::isVirtualDriverInstalled() const
+{
+    auto deviceTypes = deviceManager.getAvailableDeviceTypes();
+    for (auto* type : deviceTypes)
+    {
+        type->scanForDevices();
+        auto inputNames = type->getDeviceNames(true);
+        auto outputNames = type->getDeviceNames(false);
+        
+        bool hasCableOut = false;
+        bool hasCableIn = false;
+
+        for (const auto& name : inputNames)
+        {
+            if (name.containsIgnoreCase("CABLE Output"))
+                hasCableOut = true;
+        }
+        for (const auto& name : outputNames)
+        {
+            if (name.containsIgnoreCase("CABLE Input"))
+                hasCableIn = true;
+        }
+
+        if (hasCableOut && hasCableIn)
+            return true;
+    }
+    return false;
+}
+
+bool AudioEngine::installVirtualDriver()
+{
+    // VB-CABLE must be installed by the official VB-Audio installer setup.exe
+    // We provide direct guidance and check status.
+    return isVirtualDriverInstalled();
+}
+
+void AudioEngine::saveAndRedirectWindowsDefaultAudio(bool liveOn)
+{
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    deviceManager.getAudioDeviceSetup(setup);
+
+    if (liveOn)
+    {
+        savedDefaultDeviceName = setup.outputDeviceName;
+        // Switch Windows Default Output / Device Setup output to "CABLE Input"
+        setup.outputDeviceName = "CABLE Input";
+        setup.inputDeviceName = "CABLE Output";
+        deviceManager.setAudioDeviceSetup(setup, true);
+    }
+    else
+    {
+        // Restore previous default output device
+        if (savedDefaultDeviceName.isNotEmpty())
+        {
+            setup.outputDeviceName = savedDefaultDeviceName;
+            deviceManager.setAudioDeviceSetup(setup, true);
+        }
+    }
 }
 
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
@@ -53,11 +131,15 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     currentBlockSize = device->getCurrentBufferSizeSamples();
 
     micBusBuffer.setSize(2, currentBlockSize);
+    systemBusBuffer.setSize(2, currentBlockSize);
     musicBusBuffer.setSize(2, currentBlockSize);
     masterBusBuffer.setSize(2, currentBlockSize);
+    virtualMicOutputBuffer.setSize(2, currentBlockSize);
 
     dspChain.prepare(currentSampleRate, currentBlockSize);
+    systemDspChain.prepare(currentSampleRate, currentBlockSize);
     vstRack.prepare(currentSampleRate, currentBlockSize);
+    systemVstRack.prepare(currentSampleRate, currentBlockSize);
     autoKeyDetector.prepare(currentSampleRate, currentBlockSize);
     musicPlayer.prepare(currentSampleRate, currentBlockSize);
     sfxPlayer.prepare(currentSampleRate, currentBlockSize);
@@ -68,6 +150,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 void AudioEngine::audioDeviceStopped()
 {
     vstRack.release();
+    systemVstRack.release();
     musicPlayer.release();
 }
 
@@ -81,17 +164,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     if (numSamples <= 0 || outputChannelData == nullptr || numOutputChannels == 0)
         return;
 
-    // Check buffer allocation size
     if (micBusBuffer.getNumSamples() < numSamples)
     {
         micBusBuffer.setSize(2, numSamples, false, false, true);
+        systemBusBuffer.setSize(2, numSamples, false, false, true);
         musicBusBuffer.setSize(2, numSamples, false, false, true);
         masterBusBuffer.setSize(2, numSamples, false, false, true);
+        virtualMicOutputBuffer.setSize(2, numSamples, false, false, true);
     }
 
     micBusBuffer.clear();
+    systemBusBuffer.clear();
     musicBusBuffer.clear();
     masterBusBuffer.clear();
+    virtualMicOutputBuffer.clear();
 
     if (!isLiveOn.load())
     {
@@ -102,96 +188,122 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
         }
         micLevelPeak.store(0.0f);
         micLevelRms.store(0.0f);
+        systemLevelPeak.store(0.0f);
+        systemLevelRms.store(0.0f);
         outputLevelPeak.store(0.0f);
         outputLevelRms.store(0.0f);
         return;
     }
 
     // =========================================================================
-    // 1. MIC BUS (STRICT ISOLATION)
-    // MIC INPUT -> Noise Gate -> Compressor -> EQ -> De-Esser -> Reverb -> VST3 RACK -> MIC MASTER
+    // 1. SYSTEM AUDIO CHANNEL (VB-CABLE Output -> HNSTUDIO System Channel)
     // =========================================================================
-    if (inputChannelData != nullptr && numInputChannels > 0)
+    if (inputChannelData != nullptr && numInputChannels >= 2)
     {
-        // Read input channel(s)
-        if (numInputChannels >= 2)
-        {
-            micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
-            micBusBuffer.copyFrom(1, 0, inputChannelData[1], numSamples);
-        }
-        else
-        {
-            // Mono mic mapped to stereo
-            micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
-            micBusBuffer.copyFrom(1, 0, inputChannelData[0], numSamples);
-        }
-
-        // Pass strictly through DSP Chain:
-        // Noise Gate -> Compressor -> EQ -> De-Esser -> Reverb
-        dspChain.process(micBusBuffer);
-
-        // VST3 Insert Rack (Auto-Tune, etc.)
-        midiBuffer.clear();
-        vstRack.process(micBusBuffer, midiBuffer);
-
-        // Apply Mic Channel Volume
-        float currentMicVol = micVolume.load();
-        micBusBuffer.applyGain(currentMicVol);
-
-        // Calculate Mic Level (Peak & RMS)
-        float peakL = micBusBuffer.getMagnitude(0, 0, numSamples);
-        float peakR = micBusBuffer.getMagnitude(1, 0, numSamples);
-        float rmsL  = micBusBuffer.getRMSLevel(0, 0, numSamples);
-        float rmsR  = micBusBuffer.getRMSLevel(1, 0, numSamples);
-        micLevelPeak.store(std::max(peakL, peakR));
-        micLevelRms.store(std::max(rmsL, rmsR));
-
-        // Push to Mic Waveform FIFO (first channel)
-        const auto* micSamples = micBusBuffer.getReadPointer(0);
-        int writePos = micFifoWritePos.load();
-        for (int i = 0; i < numSamples; ++i)
-        {
-            micWaveformFifo[(writePos + i) % WaveformBufferSize] = micSamples[i];
-        }
-        micFifoWritePos.store((writePos + numSamples) % WaveformBufferSize);
-
-        // Feed to AutoKey Detector
-        autoKeyDetector.process(micBusBuffer);
+        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+        systemBusBuffer.copyFrom(1, 0, inputChannelData[1], numSamples);
     }
-    else
+    else if (inputChannelData != nullptr && numInputChannels == 1)
     {
-        micLevelPeak.store(0.0f);
-        micLevelRms.store(0.0f);
+        systemBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+        systemBusBuffer.copyFrom(1, 0, inputChannelData[0], numSamples);
     }
 
+    // System FX / VST3 Chain (Independent of Mic)
+    systemDspChain.process(systemBusBuffer);
+    systemMidiBuffer.clear();
+    systemVstRack.process(systemBusBuffer, systemMidiBuffer);
+
+    float currentSystemVol = systemVolume.load();
+    systemBusBuffer.applyGain(currentSystemVol);
+
+    float sysPeakL = systemBusBuffer.getMagnitude(0, 0, numSamples);
+    float sysPeakR = systemBusBuffer.getMagnitude(1, 0, numSamples);
+    float sysRmsL  = systemBusBuffer.getRMSLevel(0, 0, numSamples);
+    float sysRmsR  = systemBusBuffer.getRMSLevel(1, 0, numSamples);
+    systemLevelPeak.store(std::max(sysPeakL, sysPeakR));
+    systemLevelRms.store(std::max(sysRmsL, sysRmsR));
+
+    const auto* sysSamples = systemBusBuffer.getReadPointer(0);
+    int sysWrite = systemFifoWritePos.load();
+    for (int i = 0; i < numSamples; ++i)
+    {
+        systemWaveformFifo[(sysWrite + i) % WaveformBufferSize] = sysSamples[i];
+    }
+    systemFifoWritePos.store((sysWrite + numSamples) % WaveformBufferSize);
+
+
     // =========================================================================
-    // 2. MUSIC BUS (STRICT ISOLATION)
-    // MUSIC FILE / INPUT -> MUSIC VOLUME -> MUSIC MASTER
+    // 2. MICROPHONE CHANNEL (Strict Isolation)
+    // Microphone -> Mic Input -> Gate -> EQ -> Comp -> De-Esser -> VST3 -> Reverb
+    // =========================================================================
+    if (inputChannelData != nullptr && numInputChannels > 2)
+    {
+        // If device opens multi-channel (System + Mic combined or dedicated mic channel)
+        micBusBuffer.copyFrom(0, 0, inputChannelData[2], numSamples);
+        micBusBuffer.copyFrom(1, 0, inputChannelData[numInputChannels > 3 ? 3 : 2], numSamples);
+    }
+    else if (inputChannelData != nullptr && numInputChannels > 0 && !isVirtualDriverInstalled())
+    {
+        micBusBuffer.copyFrom(0, 0, inputChannelData[0], numSamples);
+        micBusBuffer.copyFrom(1, 0, inputChannelData[1 > numInputChannels - 1 ? 0 : 1], numSamples);
+    }
+
+    dspChain.process(micBusBuffer);
+    midiBuffer.clear();
+    vstRack.process(micBusBuffer, midiBuffer);
+
+    float currentMicVol = micVolume.load();
+    micBusBuffer.applyGain(currentMicVol);
+
+    float peakL = micBusBuffer.getMagnitude(0, 0, numSamples);
+    float peakR = micBusBuffer.getMagnitude(1, 0, numSamples);
+    float rmsL  = micBusBuffer.getRMSLevel(0, 0, numSamples);
+    float rmsR  = micBusBuffer.getRMSLevel(1, 0, numSamples);
+    micLevelPeak.store(std::max(peakL, peakR));
+    micLevelRms.store(std::max(rmsL, rmsR));
+
+    const auto* micSamples = micBusBuffer.getReadPointer(0);
+    int writePos = micFifoWritePos.load();
+    for (int i = 0; i < numSamples; ++i)
+    {
+        micWaveformFifo[(writePos + i) % WaveformBufferSize] = micSamples[i];
+    }
+    micFifoWritePos.store((writePos + numSamples) % WaveformBufferSize);
+
+    autoKeyDetector.process(micBusBuffer);
+
+
+    // =========================================================================
+    // 3. MUSIC BUS & SFX
     // =========================================================================
     juce::AudioSourceChannelInfo musicInfo(&musicBusBuffer, 0, numSamples);
     musicPlayer.getNextAudioBlock(musicInfo);
-
-    // Sum SFX into music bus
     sfxPlayer.getNextAudioBlock(musicBusBuffer, 0, numSamples);
 
+
     // =========================================================================
-    // 3. FINAL MASTER
-    // MIC MASTER + MUSIC MASTER -> FINAL MASTER LIMITER -> AUDIO OUTPUT
+    // 4. MASTER BUS (System + Mic + Music -> Master Limiter)
     // =========================================================================
+    masterBusBuffer.addFrom(0, 0, systemBusBuffer, 0, 0, numSamples);
+    masterBusBuffer.addFrom(1, 0, systemBusBuffer, 1, 0, numSamples);
+
     masterBusBuffer.addFrom(0, 0, micBusBuffer, 0, 0, numSamples);
     masterBusBuffer.addFrom(1, 0, micBusBuffer, 1, 0, numSamples);
 
     masterBusBuffer.addFrom(0, 0, musicBusBuffer, 0, 0, numSamples);
     masterBusBuffer.addFrom(1, 0, musicBusBuffer, 1, 0, numSamples);
 
-    // Master Limiter (Anti-Clipping)
     dspChain.getLimiter().process(masterBusBuffer);
 
-    // Apply Master Volume
     float currentMasterVol = masterVolume.load();
     masterBusBuffer.applyGain(currentMasterVol);
 
-    // Check clipping
+    // OBS Virtual Microphone Output Buffer
+    virtualMicOutputBuffer.copyFrom(0, 0, masterBusBuffer, 0, 0, numSamples);
+    virtualMicOutputBuffer.copyFrom(1, 0, masterBusBuffer, 1, 0, numSamples);
+
+    // Metering
     float outPeakL = masterBusBuffer.getMagnitude(0, 0, numSamples);
     float outPeakR = masterBusBuffer.getMagnitude(1, 0, numSamples);
     float outRmsL  = masterBusBuffer.getRMSLevel(0, 0, numSamples);
@@ -206,10 +318,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
         isClipping.store(true);
     }
 
-    // Feed to realtime audio recorder (non-blocking FIFO)
     audioRecorder.processAudioBlock(masterBusBuffer);
 
-    // Push to Output Waveform FIFO
     const auto* outSamples = masterBusBuffer.getReadPointer(0);
     int outWrite = outFifoWritePos.load();
     for (int i = 0; i < numSamples; ++i)
@@ -218,15 +328,26 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     }
     outFifoWritePos.store((outWrite + numSamples) % WaveformBufferSize);
 
-    // Copy to physical device output channels
+
+    // =========================================================================
+    // 5. MONITOR OUTPUT (Loa / Headphone if MONITOR ON)
+    // =========================================================================
+    bool monitorOn = isMonitorOn.load();
     for (int ch = 0; ch < numOutputChannels; ++ch)
     {
         if (outputChannelData[ch] != nullptr)
         {
-            int srcCh = std::min(ch, 1);
-            juce::FloatVectorOperations::copy(outputChannelData[ch],
-                                              masterBusBuffer.getReadPointer(srcCh),
-                                              numSamples);
+            if (monitorOn)
+            {
+                int srcCh = std::min(ch, 1);
+                juce::FloatVectorOperations::copy(outputChannelData[ch],
+                                                  masterBusBuffer.getReadPointer(srcCh),
+                                                  numSamples);
+            }
+            else
+            {
+                juce::FloatVectorOperations::clear(outputChannelData[ch], numSamples);
+            }
         }
     }
 }
@@ -238,7 +359,6 @@ void AudioEngine::audioDeviceError(const juce::String& errorMessage)
 
 void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 {
-    // Handle device changes/disconnects gracefully without crashing
     auto* device = deviceManager.getCurrentAudioDevice();
     if (device == nullptr)
     {
@@ -252,18 +372,30 @@ void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 
 void AudioEngine::getMicWaveform(std::array<float, WaveformBufferSize>& dest)
 {
-    int currentWrite = micFifoWritePos.load();
+    int readPos = micFifoWritePos.load();
     for (int i = 0; i < WaveformBufferSize; ++i)
     {
-        dest[i] = micWaveformFifo[(currentWrite + i) % WaveformBufferSize];
+        int idx = (readPos + i) % WaveformBufferSize;
+        dest[i] = micWaveformFifo[idx];
+    }
+}
+
+void AudioEngine::getSystemWaveform(std::array<float, WaveformBufferSize>& dest)
+{
+    int readPos = systemFifoWritePos.load();
+    for (int i = 0; i < WaveformBufferSize; ++i)
+    {
+        int idx = (readPos + i) % WaveformBufferSize;
+        dest[i] = systemWaveformFifo[idx];
     }
 }
 
 void AudioEngine::getOutputWaveform(std::array<float, WaveformBufferSize>& dest)
 {
-    int currentWrite = outFifoWritePos.load();
+    int readPos = outFifoWritePos.load();
     for (int i = 0; i < WaveformBufferSize; ++i)
     {
-        dest[i] = outputWaveformFifo[(currentWrite + i) % WaveformBufferSize];
+        int idx = (readPos + i) % WaveformBufferSize;
+        dest[i] = outputWaveformFifo[idx];
     }
 }

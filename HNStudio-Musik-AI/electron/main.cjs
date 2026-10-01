@@ -2,9 +2,12 @@ const { app, BrowserWindow, session, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// Disable hardware audio autoplay restrictions for seamless live audio processing
+// Disable hardware audio autoplay restrictions and force ultra-low latency audio buffers
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+app.commandLine.appendSwitch('audio-buffer-size', '128'); // 128 audio samples buffer (~2.6ms latency)
+app.commandLine.appendSwitch('enable-exclusive-audio');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 
 let mainWindow = null;

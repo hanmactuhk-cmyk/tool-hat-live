@@ -9,6 +9,7 @@ import {
   Download,
   Github,
   Settings,
+  AlertTriangle,
 } from 'lucide-react';
 import { generateAndDownloadProjectZip } from '../utils/projectZipBuilder';
 
@@ -163,6 +164,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Github className="w-3.5 h-3.5 text-[#38bdf8]" />
             <span>GITHUB ACTIONS</span>
+          </button>
+
+          {/* STEREO MIX FIX BUTTON */}
+          <button
+            onClick={() => onOpenPopup('stereo_mix_fix')}
+            className="px-2.5 py-2 rounded-lg text-xs font-bold bg-[#ff3366]/20 text-[#ff3366] border border-[#ff3366]/40 hover:bg-[#ff3366]/30 transition-colors flex items-center space-x-1 cursor-pointer animate-pulse"
+            title="Khắc phục lỗi sôi / hú khi bật Stereo Mix"
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">LỖI SÔI/MIX?</span>
           </button>
 
           {/* GUIDE BUTTON */}
