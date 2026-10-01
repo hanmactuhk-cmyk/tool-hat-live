@@ -53,10 +53,10 @@ export class WebAudioEngine {
   private echoWetGain: GainNode | null = null;
   private echoEnabled = true;
 
-  // Anti-Feedback Suppressor Nodes (Chống Hú Live)
+  // Anti-Feedback Suppressor Nodes (Disabled by default to prevent any popping)
   private antiFeedbackFilters: BiquadFilterNode[] = [];
   private antiFeedbackHighPass: BiquadFilterNode | null = null;
-  private isAntiFeedbackActive = true;
+  private isAntiFeedbackActive = false;
 
   // Devices
   private activeDeviceId: string = '';
@@ -69,6 +69,8 @@ export class WebAudioEngine {
   private isSystemAudioActive = false;
   private stereoMixStream: MediaStream | null = null;
   private stereoMixSource: MediaStreamAudioSourceNode | null = null;
+  private musicBassFilter: BiquadFilterNode | null = null;
+  private musicTrebleFilter: BiquadFilterNode | null = null;
 
   // Recorder
   private mediaRecorder: MediaRecorder | null = null;
@@ -132,16 +134,28 @@ export class WebAudioEngine {
     this.limiterNode.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
-    // 2. Music / External Audio Bus
+    // 2. Music / Beat Bus (Beat Volume / EQ / Mute -> Master)
     this.musicGain = this.ctx.createGain();
     this.musicGain.gain.value = 0.85;
+
+    this.musicBassFilter = this.ctx.createBiquadFilter();
+    this.musicBassFilter.type = 'lowshelf';
+    this.musicBassFilter.frequency.value = 250;
+    this.musicBassFilter.gain.value = 0;
+
+    this.musicTrebleFilter = this.ctx.createBiquadFilter();
+    this.musicTrebleFilter.type = 'highshelf';
+    this.musicTrebleFilter.frequency.value = 4000;
+    this.musicTrebleFilter.gain.value = 0;
 
     this.musicAnalyser = this.ctx.createAnalyser();
     this.musicAnalyser.fftSize = 512;
     this.musicAnalyser.smoothingTimeConstant = 0.2;
 
-    this.musicGain.connect(this.musicAnalyser);
-    this.musicGain.connect(this.masterGain);
+    this.musicGain.connect(this.musicBassFilter);
+    this.musicBassFilter.connect(this.musicTrebleFilter);
+    this.musicTrebleFilter.connect(this.musicAnalyser);
+    this.musicTrebleFilter.connect(this.masterGain);
 
     // 3. Mic Bus
     this.micGain = this.ctx.createGain();
@@ -250,17 +264,8 @@ export class WebAudioEngine {
     this.reverbDryGain = this.ctx.createGain();
     this.reverbDryGain.gain.value = 1.0;
 
-    // --- Wire DSP Processing Series ---
+    // --- Wire DSP Processing Series (Clean, Pop-Free Flow) ---
     let currentNode: AudioNode = this.rumbleFilter;
-
-    // Anti-Feedback chain
-    currentNode.connect(this.antiFeedbackHighPass);
-    currentNode = this.antiFeedbackHighPass;
-
-    this.antiFeedbackFilters.forEach((notch) => {
-      currentNode.connect(notch);
-      currentNode = notch;
-    });
 
     // Compressor
     currentNode.connect(this.compressorNode);
@@ -500,6 +505,14 @@ export class WebAudioEngine {
 
   public setMusicVolume(vol: number) {
     if (this.musicGain) this.musicGain.gain.value = vol;
+  }
+
+  public setMusicBass(gain: number) {
+    if (this.musicBassFilter) this.musicBassFilter.gain.value = gain;
+  }
+
+  public setMusicTreble(gain: number) {
+    if (this.musicTrebleFilter) this.musicTrebleFilter.gain.value = gain;
   }
 
   public setMasterVolume(vol: number) {
