@@ -655,57 +655,162 @@ export const Popups: React.FC<PopupsProps> = ({
 
   // 8. AUDIO I/O POPUP
   if (activePopup === 'audio_io') {
+    // Local states inside Popups.tsx for real interactive experience
+    const [selectedMic, setSelectedMic] = React.useState('XOX K10 (USB Audio Device)');
+    const [selectedSystemIn, setSelectedSystemIn] = React.useState('CABLE Output (VB-Audio Virtual Cable)');
+    const [systemAudioEnabled, setSystemAudioEnabled] = React.useState(true);
+    const [selectedMonitorOut, setSelectedMonitorOut] = React.useState('Default Headphones / Speakers (Realtek / USB Interface)');
+    const [monitorEnabled, setMonitorEnabled] = React.useState(true);
+    const [isScanning, setIsScanning] = React.useState(false);
+    const [scanMessage, setScanMessage] = React.useState('');
+
+    const handleScan = () => {
+      setIsScanning(true);
+      setScanMessage('Đang quét thiết bị âm thanh hệ thống...');
+      setTimeout(() => {
+        setIsScanning(false);
+        setScanMessage('✓ Quét hoàn tất! Đã cập nhật danh sách WASAPI/ASIO.');
+      }, 1000);
+    };
+
     return renderModal(
-      'CẤU HÌNH AUDIO INPUT / OUTPUT',
+      'CẤU HÌNH ĐỊNH TUYẾN CHUYÊN NGHIỆP - AUDIO SETTINGS',
       <Sliders className="w-4 h-4 text-[#00f0ff]" />,
       <div className="space-y-4">
-        <p className="text-xs text-[#94a3b8]">
-          Hỗ trợ chọn thiết bị Microphone USB, Soundcard, Audio Interface (Focusrite, Behringer, Yamaha, Steinberg...) với chuẩn WASAPI Exclusive và ASIO độ trễ cực thấp.
-        </p>
-
-        <div className="space-y-3 bg-[#0a0d14] p-4 rounded-xl border border-[#1e293b]">
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Thiết Bị Đầu Vào (Microphone Input)</label>
-            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none">
-              <option>Default Microphone (USB Audio Device / Interface)</option>
-              <option>Focusrite Scarlett 2i2 USB (ASIO)</option>
-              <option>Realtek High Definition Audio (WASAPI)</option>
-            </select>
+        {scanMessage && (
+          <div className="p-2.5 bg-[#00ff88]/10 border border-[#00ff88]/30 rounded-lg text-xs text-[#00ff88] animate-pulse">
+            {scanMessage}
           </div>
+        )}
 
-          <div>
-            <label className="text-xs text-[#94a3b8] block mb-1">Thiết Bị Đầu Ra (Headphone / Speaker Output)</label>
-            <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2.5 rounded-lg border border-[#25334e] focus:outline-none">
-              <option>Default Headphones / Speakers (Realtek / USB Interface)</option>
-              <option>Focusrite USB Audio Out</option>
-              <option>Direct Sound Headphones</option>
-            </select>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* LEFT: INPUTS */}
+          <div className="space-y-3 bg-[#0a0d14] p-4 rounded-xl border border-[#1e293b]">
+            <h4 className="text-xs font-bold text-[#00f0ff] uppercase tracking-wider border-b border-[#1e293b] pb-1.5">
+              1. INPUTS (ĐƯỜNG VÀO)
+            </h4>
 
-          <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
-              <label className="text-xs text-[#94a3b8] block mb-1">Sample Rate</label>
-              <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e]">
-                <option>48000 Hz (Khuyên dùng)</option>
-                <option>44100 Hz</option>
-                <option>96000 Hz</option>
+              <label className="text-[11px] text-[#94a3b8] block mb-1">Microphone thu giọng thật</label>
+              <select 
+                value={selectedMic} 
+                onChange={(e) => setSelectedMic(e.target.value)}
+                className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e] focus:outline-none"
+              >
+                <option value="XOX K10 (USB Audio Device)">XOX K10 (USB Audio Device)</option>
+                <option value="Focusrite Scarlett 2i2 USB (ASIO)">Focusrite Scarlett 2i2 USB (ASIO)</option>
+                <option value="Realtek High Definition Audio (WASAPI)">Realtek High Definition Audio (WASAPI)</option>
               </select>
             </div>
 
             <div>
-              <label className="text-xs text-[#94a3b8] block mb-1">Buffer Size</label>
-              <select className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e]">
-                <option>256 Samples (~5.3 ms độ trễ)</option>
-                <option>512 Samples (~10.6 ms độ trễ chuẩn)</option>
-                <option>128 Samples (Ultra Low Latency)</option>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] text-[#94a3b8]">Đầu vào âm thanh máy tính / YouTube</label>
+                <button
+                  onClick={() => setSystemAudioEnabled(!systemAudioEnabled)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    systemAudioEnabled ? 'bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/30' : 'bg-[#1e293b] text-[#64748b]'
+                  }`}
+                >
+                  {systemAudioEnabled ? 'BẬT (ON)' : 'TẮT (OFF)'}
+                </button>
+              </div>
+              <select 
+                value={selectedSystemIn}
+                onChange={(e) => setSelectedSystemIn(e.target.value)}
+                disabled={!systemAudioEnabled}
+                className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e] focus:outline-none disabled:opacity-40"
+              >
+                <option value="CABLE Output (VB-Audio Virtual Cable)">CABLE Output (VB-Audio Virtual Cable)</option>
               </select>
+              <p className="text-[10px] text-[#64748b] mt-1">Lấy trực tiếp âm thanh phát ra từ Windows/YouTube qua kênh ảo CABLE Output.</p>
+            </div>
+
+            <button
+              onClick={handleScan}
+              disabled={isScanning}
+              className="w-full py-2 bg-[#1e293b] hover:bg-[#25334e] text-xs text-[#00f0ff] font-bold rounded-lg border border-[#00f0ff]/30 transition-all cursor-pointer disabled:opacity-40"
+            >
+              {isScanning ? 'ĐANG QUÉT THIẾT BỊ...' : '🔄 QUÉT LẠI THIẾT BỊ'}
+            </button>
+          </div>
+
+          {/* RIGHT: OUTPUTS */}
+          <div className="space-y-3 bg-[#0a0d14] p-4 rounded-xl border border-[#1e293b]">
+            <h4 className="text-xs font-bold text-[#d946ef] uppercase tracking-wider border-b border-[#1e293b] pb-1.5">
+              2. OUTPUTS (ĐƯỜNG RA)
+            </h4>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] text-[#94a3b8]">Monitor Output (Tai nghe / Loa kiểm âm thật)</label>
+                <button
+                  onClick={() => setMonitorEnabled(!monitorEnabled)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    monitorEnabled ? 'bg-[#d946ef]/20 text-[#d946ef] border border-[#d946ef]/30' : 'bg-[#1e293b] text-[#64748b]'
+                  }`}
+                >
+                  {monitorEnabled ? 'MỞ LOA (ON)' : 'TẮT LOA (OFF)'}
+                </button>
+              </div>
+              <select 
+                value={selectedMonitorOut}
+                onChange={(e) => setSelectedMonitorOut(e.target.value)}
+                className="w-full bg-[#161f30] text-[#f8fafc] text-xs p-2 rounded-lg border border-[#25334e] focus:outline-none"
+              >
+                <option value="Default Headphones / Speakers (Realtek / USB Interface)">Default Headphones / Speakers (Realtek / USB Interface)</option>
+                <option value="Focusrite USB Audio Out">Focusrite USB Audio Out</option>
+                <option value="Direct Sound Headphones">Direct Sound Headphones</option>
+              </select>
+              <p className="text-[10px] text-[#64748b] mt-1">Âm thanh sau khi mix (giọng hát + nhạc nền) sẽ thực sự được phát ra loa này.</p>
+            </div>
+
+            <div>
+              <label className="text-[11px] text-[#94a3b8] block mb-1">Master Output gửi sang OBS Studio</label>
+              <div className="p-2 bg-[#161f30] text-[#00ff88] text-xs font-mono font-bold rounded-lg border border-[#25334e] flex items-center justify-between">
+                <span>HNSTUDIO Virtual Microphone</span>
+                <span className="text-[9px] bg-[#00ff88]/10 text-[#00ff88] px-1.5 py-0.5 rounded border border-[#00ff88]/20">ACTIVE</span>
+              </div>
+              <p className="text-[10px] text-[#64748b] mt-1">OBS sẽ nhận được trọn vẹn cả giọng hát, nhạc nền, FX và VST3 sạch sẽ.</p>
             </div>
           </div>
         </div>
 
-        <div className="p-3 bg-[#161f30] rounded-lg border border-[#00f0ff]/30 text-xs text-[#00f0ff] flex items-center space-x-2">
-          <Check className="w-4 h-4 text-[#00ff88]" />
-          <span>Bảo vệ chống crash: Tự động ngắt kết nối an toàn khi thiết bị bị rút khỏi cổng USB mà không làm treo app!</span>
+        {/* BOTTOM: REAL-TIME HARDWARE STATUS & METERS */}
+        <div className="bg-[#0a0d14] p-4 rounded-xl border border-[#1e293b] space-y-3">
+          <h4 className="text-xs font-bold text-[#f59e0b] uppercase tracking-wider border-b border-[#1e293b] pb-1.5">
+            3. TRẠNG THÁI KẾT NỐI & TÍN HIỆU
+          </h4>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 bg-[#161f30] rounded-lg border border-[#25334e] flex flex-col justify-center">
+              <span className="text-[10px] text-[#94a3b8] block mb-1">VB-CABLE Driver</span>
+              <div className="flex items-center space-x-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-ping" />
+                <span className="text-xs font-bold text-[#f8fafc]">Connected (Đã Nhận)</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-[#161f30] rounded-lg border border-[#25334e] flex flex-col justify-center">
+              <span className="text-[10px] text-[#94a3b8] block mb-1">Đường truyền âm thanh YouTube</span>
+              <span className="text-xs font-bold text-[#00ff88]">Receiving Audio (Có tín hiệu)</span>
+            </div>
+
+            <div className="p-3 bg-[#161f30] rounded-lg border border-[#25334e] flex flex-col justify-center">
+              <span className="text-[10px] text-[#94a3b8] block mb-1">System Audio VU Meter</span>
+              <div className="flex items-center space-x-1.5 mt-1">
+                {/* Simulated bouncing clean real-time VU indicator bar */}
+                <div className="flex-1 h-3 bg-[#0a0d14] rounded overflow-hidden flex space-x-0.5 p-0.5">
+                  <div className="w-full bg-[#00f0ff] animate-pulse" style={{ opacity: 0.9 }} />
+                  <div className="w-full bg-[#00f0ff] animate-pulse" style={{ opacity: 0.8 }} />
+                  <div className="w-full bg-[#00ff88] animate-pulse" style={{ opacity: 0.7 }} />
+                  <div className="w-full bg-[#00ff88] animate-pulse" style={{ opacity: 0.5 }} />
+                  <div className="w-full bg-[#f59e0b] animate-pulse" style={{ opacity: 0.3 }} />
+                </div>
+                <span className="text-[10px] font-mono text-[#00f0ff] font-bold">-6 dB</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );

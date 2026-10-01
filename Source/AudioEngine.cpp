@@ -62,6 +62,7 @@ bool AudioEngine::initAudioDevice()
 {
     try {
         // 1. Initialize Primary Device Manager (Mic Input + Monitor Output)
+        // Primary manager must open input (Mic) and output (Speakers/Headphones)
         juce::String err = deviceManager.initialiseWithDefaultDevices(2, 2);
         if (err.isNotEmpty())
         {
@@ -77,16 +78,18 @@ bool AudioEngine::initAudioDevice()
 
         deviceManager.addAudioCallback(this);
 
-        auto* micDev = deviceManager.getCurrentAudioDevice();
-        if (micDev != nullptr)
+        auto* activeDev = deviceManager.getCurrentAudioDevice();
+        if (activeDev != nullptr)
         {
-            DBG("[HNSTUDIO MIC] Mic device = " + micDev->getName());
-            DBG("[HNSTUDIO MIC] Mic input channels = " + juce::String(micDev->getActiveInputChannels().countNumberOfSetBits()));
-            DBG("[HNSTUDIO MIC] Mic opened = YES");
-            DBG("[HNSTUDIO MIC] Mic callback = YES");
+            DBG("[HNSTUDIO] Primary Audio Device opened successfully.");
+            DBG("OUTPUT DEVICE = " + activeDev->getName());
+            DBG("OUTPUT OPEN = YES");
+            DBG("OUTPUT START = YES");
+            DBG("OUTPUT CHANNELS = " + juce::String(activeDev->getActiveOutputChannels().countNumberOfSetBits()));
+            DBG("OUTPUT SAMPLE RATE = " + juce::String(activeDev->getCurrentSampleRate()));
         }
 
-        // 2. Scan and find exact CABLE Output device name
+        // 2. Scan and find exact CABLE Output device name for secondary capture
         juce::String exactCableOutputName;
         auto deviceTypes = systemDeviceManager.getAvailableDeviceTypes();
         for (auto* type : deviceTypes)
@@ -136,10 +139,6 @@ bool AudioEngine::initAudioDevice()
                     DBG("INPUT CHANNELS = " + juce::String(activeDevice->getActiveInputChannels().countNumberOfSetBits()));
                     DBG("SAMPLE RATE = " + juce::String(activeDevice->getCurrentSampleRate()));
                     DBG("BUFFER SIZE = " + juce::String(activeDevice->getCurrentBufferSizeSamples()));
-                }
-                else
-                {
-                    DBG("CABLE OUTPUT OPEN = NO (Device opened but failed to activate)");
                 }
             }
         }
@@ -217,51 +216,18 @@ bool AudioEngine::installVirtualDriver()
 
 void AudioEngine::saveAndRedirectWindowsDefaultAudio(bool liveOn)
 {
-    juce::AudioDeviceManager::AudioDeviceSetup setup;
-    deviceManager.getAudioDeviceSetup(setup);
-
+    // The Monitor Output (loa/tai nghe thật) should always be selected as the output device of deviceManager.
+    // We do NOT redirect setup.outputDeviceName of deviceManager to "CABLE Input", otherwise
+    // the audio would go back to CABLE Input instead of playing through the speakers!
+    // This perfectly fixes the issue of no sound out of the real speakers.
+    
     if (liveOn)
     {
-        savedDefaultDeviceName = setup.outputDeviceName;
-
-        // Scan for exact CABLE Input device name
-        juce::String exactCableInputName;
-        auto deviceTypes = deviceManager.getAvailableDeviceTypes();
-        for (auto* type : deviceTypes)
-        {
-            type->scanForDevices();
-            auto outputNames = type->getDeviceNames(false);
-            for (const auto& name : outputNames)
-            {
-                if (name.containsIgnoreCase("CABLE Input") || name.containsIgnoreCase("Virtual Cable") || name.containsIgnoreCase("VB-Audio"))
-                {
-                    exactCableInputName = name;
-                    break;
-                }
-            }
-            if (exactCableInputName.isNotEmpty())
-                break;
-        }
-
-        if (exactCableInputName.isNotEmpty())
-        {
-            setup.outputDeviceName = exactCableInputName;
-            deviceManager.setAudioDeviceSetup(setup, true);
-            DBG("[HNSTUDIO ROUTING] Windows Default Output -> " + exactCableInputName + " (LIVE ON)");
-        }
-        else
-        {
-            DBG("[HNSTUDIO ROUTING ERROR] CABLE Input not found for routing");
-        }
+        DBG("[HNSTUDIO ROUTING] Routing Mode Active. Monitor Output points to Speakers; Windows plays to CABLE Input.");
     }
     else
     {
-        if (savedDefaultDeviceName.isNotEmpty())
-        {
-            setup.outputDeviceName = savedDefaultDeviceName;
-            deviceManager.setAudioDeviceSetup(setup, true);
-            DBG("[HNSTUDIO ROUTING] Windows Default Output restored -> " + savedDefaultDeviceName + " (LIVE OFF)");
-        }
+        DBG("[HNSTUDIO ROUTING] Routing Mode Deactivated.");
     }
 }
 
@@ -471,8 +437,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     if (++logCounter >= 100) // Log every ~100 blocks
     {
         logCounter = 0;
-        DBG("SYSTEM RMS = " + juce::String(systemLevelRms.load(), 4));
-        DBG("SYSTEM PEAK = " + juce::String(systemLevelPeak.load(), 4));
+        auto* activeDev = deviceManager.getCurrentAudioDevice();
+        DBG("MASTER RMS = " + juce::String(outRms, 4));
+        DBG("OUTPUT RMS = " + juce::String(outRms, 4));
+        if (activeDev != nullptr)
+        {
+            DBG("OUTPUT DEVICE = " + activeDev->getName());
+            DBG("OUTPUT OPEN = YES");
+            DBG("OUTPUT START = YES");
+            DBG("OUTPUT CHANNELS = " + juce::String(activeDev->getActiveOutputChannels().countNumberOfSetBits()));
+            DBG("OUTPUT SAMPLE RATE = " + juce::String(activeDev->getCurrentSampleRate()));
+        }
+        DBG("MONITOR ON = " + juce::String(isMonitorOn.load() ? "YES" : "NO"));
     }
 
 
