@@ -11,9 +11,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Enable MSVC Multithreaded compilation & UTF-8 character encoding
+# Enable MSVC Multithreaded compilation & UTF-8 character encoding & Static Runtime (/MT)
 if (MSVC)
     add_compile_options(/MP /utf-8 /W3)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # ------------------------------------------------------------------------------

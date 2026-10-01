@@ -13,7 +13,15 @@ public:
 
     void initialise(const juce::String& /*commandLine*/) override
     {
-        mainWindow = std::make_unique<MainWindow>(getApplicationName());
+        try {
+            mainWindow = std::make_unique<MainWindow>(getApplicationName());
+        }
+        catch (const std::exception& e) {
+            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", e.what());
+        }
+        catch (...) {
+            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon, "HNStudio Startup Error", "Khởi động giao diện thất bại.");
+        }
     }
 
     void shutdown() override

@@ -14,19 +14,29 @@ AudioEngine::~AudioEngine()
 
 bool AudioEngine::initAudioDevice()
 {
-    // Initialize with 2 inputs and 2 outputs, preferred 48kHz or 44.1kHz, 512 buffer
-    juce::AudioDeviceManager::AudioDeviceSetup setup;
-    deviceManager.getAudioDeviceSetup(setup);
-    
-    juce::String err = deviceManager.initialise(2, 2, nullptr, true, {}, &setup);
-    if (err.isNotEmpty())
-    {
-        lastDeviceError = "Khởi tạo thiết bị âm thanh thất bại: " + err;
+    try {
+        juce::AudioDeviceManager::AudioDeviceSetup setup;
+        deviceManager.getAudioDeviceSetup(setup);
+        
+        juce::String err = deviceManager.initialiseWithDefaultDevices(2, 2);
+        if (err.isNotEmpty())
+        {
+            // If failed (e.g. mic permission disabled in Windows or no input plugged in), fallback to output only
+            err = deviceManager.initialiseWithDefaultDevices(0, 2);
+        }
+
+        if (err.isNotEmpty())
+        {
+            lastDeviceError = "Khởi tạo thiết bị âm thanh thất bại: " + err;
+            return false;
+        }
+
+        deviceManager.addAudioCallback(this);
+        return true;
+    }
+    catch (...) {
         return false;
     }
-
-    deviceManager.addAudioCallback(this);
-    return true;
 }
 
 void AudioEngine::closeAudioDevice()
