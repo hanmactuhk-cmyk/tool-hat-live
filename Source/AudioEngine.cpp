@@ -13,17 +13,17 @@ void AudioEngine::SystemAudioCallback::audioDeviceAboutToStart(juce::AudioIODevi
 {
     if (device != nullptr)
     {
-        DBG("[HNSTUDIO SYSTEM] CABLE Output opened = YES");
-        DBG("[HNSTUDIO SYSTEM] Input channels = " + juce::String(device->getActiveInputChannels().countNumberOfSetBits()));
-        DBG("[HNSTUDIO SYSTEM] Sample rate = " + juce::String(device->getCurrentSampleRate()));
-        DBG("[HNSTUDIO SYSTEM] Buffer size = " + juce::String(device->getCurrentBufferSizeSamples()));
-        DBG("[HNSTUDIO SYSTEM] Audio callback started = YES");
+        DBG("CABLE OUTPUT OPEN = YES");
+        DBG("CABLE OUTPUT START = YES");
+        DBG("INPUT CHANNELS = " + juce::String(device->getActiveInputChannels().countNumberOfSetBits()));
+        DBG("SAMPLE RATE = " + juce::String(device->getCurrentSampleRate()));
+        DBG("BUFFER SIZE = " + juce::String(device->getCurrentBufferSizeSamples()));
     }
 }
 
 void AudioEngine::SystemAudioCallback::audioDeviceStopped()
 {
-    DBG("[HNSTUDIO SYSTEM] CABLE Output device stopped.");
+    DBG("CABLE OUTPUT START = NO (device stopped)");
 }
 
 void AudioEngine::SystemAudioCallback::audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
@@ -39,7 +39,7 @@ void AudioEngine::SystemAudioCallback::audioDeviceIOCallbackWithContext(const fl
 
 void AudioEngine::SystemAudioCallback::audioDeviceError(const juce::String& errorMessage)
 {
-    DBG("[HNSTUDIO SYSTEM ERROR] CABLE Output error: " + errorMessage);
+    DBG("CABLE OUTPUT OPEN = NO (" + errorMessage + ")");
 }
 
 
@@ -85,42 +85,68 @@ bool AudioEngine::initAudioDevice()
             DBG("[HNSTUDIO MIC] Mic opened = YES");
             DBG("[HNSTUDIO MIC] Mic callback = YES");
         }
-        else
+
+        // 2. Scan and find exact CABLE Output device name
+        juce::String exactCableOutputName;
+        auto deviceTypes = systemDeviceManager.getAvailableDeviceTypes();
+        for (auto* type : deviceTypes)
         {
-            DBG("[HNSTUDIO MIC] Mic device = NONE / OUTPUT ONLY");
+            type->scanForDevices();
+            auto inputNames = type->getDeviceNames(true);
+            for (const auto& name : inputNames)
+            {
+                if (name.containsIgnoreCase("CABLE Output") || name.containsIgnoreCase("Virtual Cable") || name.containsIgnoreCase("VB-Audio"))
+                {
+                    exactCableOutputName = name;
+                    systemDeviceManager.setCurrentAudioDeviceType(type->getTypeName(), true);
+                    break;
+                }
+            }
+            if (exactCableOutputName.isNotEmpty())
+                break;
         }
 
-        // 2. Initialize Secondary System Device Manager (CABLE Output Input)
-        if (isVirtualDriverInstalled())
+        if (exactCableOutputName.isNotEmpty())
         {
-            DBG("[HNSTUDIO VIRTUAL] VB-CABLE detected = YES");
+            DBG("CABLE OUTPUT FOUND = YES");
+            DBG("CABLE OUTPUT DEVICE NAME = " + exactCableOutputName);
+            
             juce::AudioDeviceManager::AudioDeviceSetup sysSetup;
             systemDeviceManager.getAudioDeviceSetup(sysSetup);
-            sysSetup.inputDeviceName = "CABLE Output";
-            sysSetup.outputDeviceName = ""; // Input only for system audio capture
+            sysSetup.inputDeviceName = exactCableOutputName;
+            sysSetup.outputDeviceName = ""; // Input capture only
             sysSetup.sampleRate = 44100.0;
             sysSetup.bufferSize = 512;
+            sysSetup.inputChannels.setRange(0, 2, true); // Explicitly enable stereo input
+            sysSetup.useDefaultInputChannels = false;
 
             juce::String sysErr = systemDeviceManager.setAudioDeviceSetup(sysSetup, true);
             if (sysErr.isNotEmpty())
             {
-                // Try initialising with CABLE Output explicitly
-                sysErr = systemDeviceManager.initialise(2, 0, nullptr, true, "CABLE Output", nullptr);
-            }
-
-            if (sysErr.isNotEmpty())
-            {
-                DBG("[HNSTUDIO VIRTUAL ERROR] Không thể mở CABLE Output: " + sysErr);
+                DBG("CABLE OUTPUT OPEN = NO (" + sysErr + ")");
             }
             else
             {
                 systemDeviceManager.addAudioCallback(&systemAudioCallback);
-                DBG("[HNSTUDIO VIRTUAL] CABLE Output opened = YES");
+                auto* activeDevice = systemDeviceManager.getCurrentAudioDevice();
+                if (activeDevice != nullptr && activeDevice->isOpen())
+                {
+                    DBG("CABLE OUTPUT OPEN = YES");
+                    DBG("CABLE OUTPUT START = YES");
+                    DBG("INPUT CHANNELS = " + juce::String(activeDevice->getActiveInputChannels().countNumberOfSetBits()));
+                    DBG("SAMPLE RATE = " + juce::String(activeDevice->getCurrentSampleRate()));
+                    DBG("BUFFER SIZE = " + juce::String(activeDevice->getCurrentBufferSizeSamples()));
+                }
+                else
+                {
+                    DBG("CABLE OUTPUT OPEN = NO (Device opened but failed to activate)");
+                }
             }
         }
         else
         {
-            DBG("[HNSTUDIO VIRTUAL] VB-CABLE detected = NO (Vui lòng cài đặt VB-CABLE)");
+            DBG("CABLE OUTPUT FOUND = NO");
+            DBG("CABLE OUTPUT OPEN = NO (Device not found during system scan)");
         }
 
         return true;
@@ -169,12 +195,12 @@ bool AudioEngine::isVirtualDriverInstalled() const
 
         for (const auto& name : inputs)
         {
-            if (name.containsIgnoreCase("CABLE Output"))
+            if (name.containsIgnoreCase("CABLE Output") || name.containsIgnoreCase("Virtual Cable") || name.containsIgnoreCase("VB-Audio"))
                 hasCableOut = true;
         }
         for (const auto& name : outputs)
         {
-            if (name.containsIgnoreCase("CABLE Input"))
+            if (name.containsIgnoreCase("CABLE Input") || name.containsIgnoreCase("Virtual Cable") || name.containsIgnoreCase("VB-Audio"))
                 hasCableIn = true;
         }
 
@@ -197,9 +223,36 @@ void AudioEngine::saveAndRedirectWindowsDefaultAudio(bool liveOn)
     if (liveOn)
     {
         savedDefaultDeviceName = setup.outputDeviceName;
-        setup.outputDeviceName = "CABLE Input";
-        deviceManager.setAudioDeviceSetup(setup, true);
-        DBG("[HNSTUDIO ROUTING] Windows Default Output -> CABLE Input (LIVE ON)");
+
+        // Scan for exact CABLE Input device name
+        juce::String exactCableInputName;
+        auto deviceTypes = deviceManager.getAvailableDeviceTypes();
+        for (auto* type : deviceTypes)
+        {
+            type->scanForDevices();
+            auto outputNames = type->getDeviceNames(false);
+            for (const auto& name : outputNames)
+            {
+                if (name.containsIgnoreCase("CABLE Input") || name.containsIgnoreCase("Virtual Cable") || name.containsIgnoreCase("VB-Audio"))
+                {
+                    exactCableInputName = name;
+                    break;
+                }
+            }
+            if (exactCableInputName.isNotEmpty())
+                break;
+        }
+
+        if (exactCableInputName.isNotEmpty())
+        {
+            setup.outputDeviceName = exactCableInputName;
+            deviceManager.setAudioDeviceSetup(setup, true);
+            DBG("[HNSTUDIO ROUTING] Windows Default Output -> " + exactCableInputName + " (LIVE ON)");
+        }
+        else
+        {
+            DBG("[HNSTUDIO ROUTING ERROR] CABLE Input not found for routing");
+        }
     }
     else
     {
@@ -270,8 +323,9 @@ void AudioEngine::processSystemAudioBlock(const float* const* inputChannelData, 
     systemBusBuffer.applyGain(currentSystemVol);
 
     float sysRms = systemBusBuffer.getRMSLevel(0, 0, numSamples);
+    float sysPeak = systemBusBuffer.getMagnitude(0, 0, numSamples);
     systemLevelRms.store(sysRms);
-    systemLevelPeak.store(systemBusBuffer.getMagnitude(0, 0, numSamples));
+    systemLevelPeak.store(sysPeak);
 
     const auto* sysSamples = systemBusBuffer.getReadPointer(0);
     int sysWrite = systemFifoWritePos.load();
@@ -417,9 +471,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputChan
     if (++logCounter >= 100) // Log every ~100 blocks
     {
         logCounter = 0;
-        DBG("[HNSTUDIO METRICS] System RMS: " + juce::String(systemLevelRms.load(), 4) +
-            " | Mic RMS: " + juce::String(micLevelRms.load(), 4) +
-            " | Master RMS: " + juce::String(outputLevelRms.load(), 4));
+        DBG("SYSTEM RMS = " + juce::String(systemLevelRms.load(), 4));
+        DBG("SYSTEM PEAK = " + juce::String(systemLevelPeak.load(), 4));
     }
 
 
