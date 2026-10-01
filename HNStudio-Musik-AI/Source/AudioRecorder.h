@@ -74,7 +74,7 @@ public:
 
     double getRecordedSeconds() const noexcept
     {
-        return (double)recordedSamplesCount.get() / (currentSampleRate > 0.0 ? currentSampleRate : 44100.0);
+        return (double)recordedSamplesCount.load() / (currentSampleRate > 0.0 ? currentSampleRate : 44100.0);
     }
 
     juce::String getFormattedTime() const

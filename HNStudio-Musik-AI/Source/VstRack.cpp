@@ -233,19 +233,23 @@ std::vector<VstRack::KeySyncResult> VstRack::sendKeyToPlugins(int keyIndex, bool
         auto* proc = slot->plugin.get();
         bool foundKeyParam = false;
 
-        for (int p = 0; p < proc->getNumParameters(); ++p)
+        const auto& params = proc->getParameters();
+        for (auto* param : params)
         {
-            auto pName = proc->getParameterName(p).toLowerCase();
+            if (param == nullptr)
+                continue;
+
+            auto pName = param->getName(128).toLowerCase();
             if (pName.contains("key") || pName.contains("root") || pName.contains("tonic"))
             {
                 // Normalize 0.0 to 1.0
                 float normVal = (float)keyIndex / 11.0f;
-                proc->setParameter(p, normVal);
+                param->setValueNotifyingHost(normVal);
                 foundKeyParam = true;
             }
             if (pName.contains("scale") || pName.contains("mode"))
             {
-                proc->setParameter(p, isMajor ? 0.0f : 1.0f);
+                param->setValueNotifyingHost(isMajor ? 0.0f : 1.0f);
             }
         }
 

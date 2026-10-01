@@ -1,6 +1,27 @@
 import JSZip from 'jszip';
 
 export async function generateAndDownloadProjectZip(): Promise<void> {
+  // First attempt: fetch pre-built, verified binary ZIP archive directly
+  try {
+    const res = await fetch('/HNStudio-Musik-AI.zip');
+    if (res.ok) {
+      const blob = await res.blob();
+      if (blob.size > 20000) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'HNStudio-Musik-AI.zip';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct zip fetch fallback to in-memory generator', err);
+  }
+
   const zip = new JSZip();
   const root = zip.folder('HNStudio-Musik-AI');
   if (!root) return;
@@ -49,12 +70,16 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist\\HNStudio-Musik-AI
-          $exePath = Get-ChildItem -Path build -Filter "HNStudioMusikAI.exe" -Recurse | Select-Object -First 1
+          $exePath = Get-ChildItem -Path build -Filter "*HNStudio*.exe" -Recurse | Select-Object -First 1
+          if (-not $exePath) {
+              $exePath = Get-ChildItem -Path build -Filter "*.exe" -Recurse | Where-Object { $_.FullName -notmatch "CMakeFiles|CompilerId" } | Select-Object -First 1
+          }
           if ($exePath) {
               Write-Host "Found executable at: $($exePath.FullName)"
-              Copy-Item -Path $exePath.FullName -Destination dist\\HNStudio-Musik-AI\\
+              Copy-Item -Path $exePath.FullName -Destination "dist\\HNStudio-Musik-AI\\"
+              Copy-Item -Path $exePath.FullName -Destination "dist\\HNStudio-Musik-AI\\HNStudioMusikAI.exe"
           } else {
-              Write-Error "HNStudioMusikAI.exe not found in build directory!"
+              Write-Error "Executable not found in build directory!"
               exit 1
           }
           if (Test-Path "README.md") {
