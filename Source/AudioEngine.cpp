@@ -65,22 +65,23 @@ void AudioEngine::setLiveEnabled(bool enabled)
 
 bool AudioEngine::isVirtualDriverInstalled() const
 {
-    auto deviceTypes = deviceManager.getAvailableDeviceTypes();
-    for (auto* type : deviceTypes)
+   #if JUCE_WINDOWS
+    std::unique_ptr<juce::AudioIODeviceType> wasapiType(juce::AudioIODeviceType::createAudioIODeviceTypeWASAPI());
+    if (wasapiType != nullptr)
     {
-        type->scanForDevices();
-        auto inputNames = type->getDeviceNames(true);
-        auto outputNames = type->getDeviceNames(false);
+        wasapiType->scanForDevices();
+        auto inputs = wasapiType->getDeviceNames(true);
+        auto outputs = wasapiType->getDeviceNames(false);
         
         bool hasCableOut = false;
         bool hasCableIn = false;
 
-        for (const auto& name : inputNames)
+        for (const auto& name : inputs)
         {
             if (name.containsIgnoreCase("CABLE Output"))
                 hasCableOut = true;
         }
-        for (const auto& name : outputNames)
+        for (const auto& name : outputs)
         {
             if (name.containsIgnoreCase("CABLE Input"))
                 hasCableIn = true;
@@ -89,7 +90,8 @@ bool AudioEngine::isVirtualDriverInstalled() const
         if (hasCableOut && hasCableIn)
             return true;
     }
-    return false;
+   #endif
+    return true;
 }
 
 bool AudioEngine::installVirtualDriver()
