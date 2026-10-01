@@ -1,5 +1,6 @@
 const { app, BrowserWindow, session, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 // Disable hardware audio autoplay restrictions for seamless live audio processing
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -15,12 +16,12 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0a0d14',
-    title: 'HNStudio Musik AI - Hát Live Chuyên Nghiệp',
+    title: 'HNStudio Musik AI - Phần Mềm Hát Live Chuyên Nghiệp',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: true,
+      webSecurity: false, // Allows seamless local assets loading
       sandbox: false,
       backgroundThrottling: false, // Prevent audio crackling when window is minimized/background
     },
@@ -49,7 +50,12 @@ function createWindow() {
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Robust path resolution for packaged production app
+    let indexPath = path.join(__dirname, '../dist/index.html');
+    if (!fs.existsSync(indexPath)) {
+      indexPath = path.join(app.getAppPath(), 'dist/index.html');
+    }
+    mainWindow.loadFile(indexPath);
   }
 
   mainWindow.once('ready-to-show', () => {
@@ -63,6 +69,14 @@ function createWindow() {
       shell.openExternal(url);
     }
     return { action: 'deny' };
+  });
+
+  // Shortcut for dev tools if needed
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
+    }
   });
 
   mainWindow.on('closed', () => {
