@@ -91,7 +91,7 @@ bool AudioEngine::initAudioDevice()
 
         // 2. Scan and find exact CABLE Output device name for secondary capture
         juce::String exactCableOutputName;
-        auto deviceTypes = systemDeviceManager.getAvailableDeviceTypes();
+        const auto& deviceTypes = systemDeviceManager.getAvailableDeviceTypes();
         for (auto* type : deviceTypes)
         {
             type->scanForDevices();
@@ -181,13 +181,13 @@ void AudioEngine::setLiveEnabled(bool enabled)
 
 bool AudioEngine::isVirtualDriverInstalled() const
 {
-   #if JUCE_WINDOWS
-    std::unique_ptr<juce::AudioIODeviceType> wasapiType(juce::AudioIODeviceType::createAudioIODeviceTypeWASAPI());
-    if (wasapiType != nullptr)
+    auto& manager = const_cast<juce::AudioDeviceManager&>(systemDeviceManager);
+    const auto& deviceTypes = manager.getAvailableDeviceTypes();
+    for (auto* type : deviceTypes)
     {
-        wasapiType->scanForDevices();
-        auto inputs = wasapiType->getDeviceNames(true);
-        auto outputs = wasapiType->getDeviceNames(false);
+        type->scanForDevices();
+        auto inputs = type->getDeviceNames(true);
+        auto outputs = type->getDeviceNames(false);
         
         bool hasCableOut = false;
         bool hasCableIn = false;
@@ -203,10 +203,10 @@ bool AudioEngine::isVirtualDriverInstalled() const
                 hasCableIn = true;
         }
 
-        return hasCableOut && hasCableIn;
+        if (hasCableOut && hasCableIn)
+            return true;
     }
-   #endif
-    return true;
+    return false;
 }
 
 bool AudioEngine::installVirtualDriver()
